@@ -6,8 +6,8 @@ import {
   Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 /**
  * 智策供应链全景指挥系统 - 旗舰记忆增强版
@@ -48,7 +48,12 @@ try {
   if (hasFirebase) {
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
     auth = getAuth(app);
-    db = getFirestore(app);
+
+    // ✅ 关键增强：支持指定 Firestore 数据库 ID（多数据库场景）
+    // - 绝大多数 Firebase 项目是默认库，无需配置
+    // - 如果你在 GCP 控制台创建了非 (default) 的库，可通过 VITE_FIRESTORE_DB_ID 指定
+    const firestoreDbId = (import.meta.env.VITE_FIRESTORE_DB_ID || '').trim();
+    db = firestoreDbId ? getFirestore(app, firestoreDbId) : getFirestore(app);
   }
 } catch (e) {
   console.warn('Firebase 初始化失败：', e);
@@ -60,37 +65,6 @@ const DEFAULT_DATA = [
   { id: 1, name: '旗舰商品 A (北美线)', currentStock: 1200, monthlySales: Array(12).fill(600), pos: [{ id: 101, poNumber: 'PO-20260214-001', orderDate: new Date().toISOString().split('T')[0], qty: 2500, prodDays: 30, leg1Mode: 'sea', leg1Days: 35, leg2Mode: 'rail', leg2Days: 15 }] },
   { id: 2, name: '高周转新品 B (东南亚)', currentStock: 4000, monthlySales: Array(12).fill(800), pos: [] }
 ];
-
-// --- 1.2 本地备份（防止云端异常导致刷新丢失）---
-// 说明：
-// - 云端正常时：以 Firestore 为主，本地仅做备份。
-// - 云端不可用/权限异常时：至少保证同一台电脑刷新不丢。
-const LOCAL_STORAGE_KEY = `inventory_forecast_backup:${appId}:v1`;
-
-function readLocalBackup() {
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const items = sanitizeSkus(parsed?.items ?? parsed?.skus);
-    return items.length ? items : null;
-  } catch (e) {
-    return null;
-  }
-}
-
-function writeLocalBackup(items) {
-  try {
-    localStorage.setItem(
-      LOCAL_STORAGE_KEY,
-      JSON.stringify({ items, lastUpdated: new Date().toISOString() })
-    );
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
 
 function sanitizeSkus(items) {
   const safeArr = Array.isArray(items) ? items : [];
@@ -119,6 +93,28 @@ function sanitizeSkus(items) {
     });
 }
 
+// ----------------- 本地兜底记忆（避免云端异常导致刷新丢失） -----------------
+function loadLocalMemory(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveLocalMemory(key, payload) {
+  try {
+    localStorage.setItem(key, JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const App = () => {
   // --- 状态管理 ---
   const [viewMode, setViewMode] = useState('detail'); 
@@ -135,6 +131,12 @@ const App = () => {
   const [renamingSkuId, setRenamingSkuId] = useState(null);
   const [tempName, setTempName] = useState('');
   const [warning, setWarning] = useState('');
+
+  // 本地兜底：即使云端异常，也不会因为刷新直接丢失
+  const localKey = useMemo(() => `inventory_forecast:${appId}:shared_v1`, []);
+
+  // 云端健康状态（初始化时只根据是否配置了 Firebase 来粗判断，真正连通性由 onSnapshot ...)
+  const [cloudOk, setCloudOk] = useState(!!db);
   const [horizonDays, setHorizonDays] = useState(365);
   const [onlyInboundDays, setOnlyInboundDays] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -176,7 +178,9 @@ const App = () => {
     };
   });
 
-  const memoryModeText = db ? '云端备份已启用' : '离线模式';
+  const memoryModeText = !db
+    ? '离线模式（仅本地记忆）'
+    : (cloudOk ? '云端同步已启用（多人共享）' : '云端连接异常：已降级本地');
 
   // 生成 PO 号的函数
   const generatePONumber = (skuId) => {
@@ -206,23 +210,17 @@ const App = () => {
   // --- 2. 身份认证逻辑 ---
   useEffect(() => {
     if (!auth) return;
-
     const initAuth = async () => {
       try {
-        // 强制本地持久化，避免刷新后匿名用户被重置（某些环境会默认变成内存态）
-        await setPersistence(auth, browserLocalPersistence);
-
-        // 如果已经登录（含匿名），不要重复创建新用户
-        if (!auth.currentUser) {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
           await signInAnonymously(auth);
         }
-      } catch (err) {
-        console.error('匿名登录失败：', err);
-        setWarning('云端登录失败：请检查 Firebase Authentication 是否启用 Anonymous，以及 Vercel 域名是否在 Authorized domains 中');
-        setStatus('error');
+      } catch (err) { 
+        setStatus('error'); 
       }
     };
-
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (currUser) => {
       setUser(currUser);
@@ -230,115 +228,113 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // --- 3. 数据记忆读取 (修复路径段数与记忆逻辑) ---
+  // --- 3. 数据记忆读取（云端共享优先 + 本地兜底） ---
   useEffect(() => {
-    // --- 3.1 如未启用 Firebase，使用默认数据 ---
-    if (!db) {
-      if (hydratedRef.current) return;
-      hydratedRef.current = true;
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
 
-      // 如果 Firebase 没成功启用：优先读本地备份，避免刷新丢数据
-      const local = readLocalBackup();
-      const initialData = local ? local : sanitizeSkus(DEFAULT_DATA);
-
-      if (hasFirebase && !db) {
-        setWarning('已配置 Firebase，但初始化失败/未注入环境变量：当前进入离线模式（仅本机可记忆）。请确认 Vercel Environment Variables 已设置到当前部署环境并 Redeploy。');
+    // 3.0 先从本地恢复（即便云端异常也不会刷新丢失）
+    const local = loadLocalMemory(localKey);
+    if (local && Array.isArray(local.skus)) {
+      const localSkus = sanitizeSkus(local.skus);
+      if (localSkus.length > 0) {
+        setSkus(localSkus);
+        setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-
-      setSkus(initialData);
-      const firstId = initialData[0]?.id ?? 1;
-      setSelectedSkuId(firstId);
-      setViewMode('detail');
-
-      // 立刻写入本地备份，避免第一次打开还没改就刷新又回默认
-      writeLocalBackup(initialData);
-
-      setIsInitialLoadDone(true);
+      if (local.viewMode === 'detail' || local.viewMode === 'list') setViewMode(local.viewMode);
       setStatus('ready');
+    } else {
+      const initialData = sanitizeSkus(DEFAULT_DATA);
+      setSkus(initialData);
+      setSelectedSkuId(initialData[0]?.id ?? 1);
+      setViewMode('detail');
+      setStatus('ready');
+    }
+
+    // 3.1 未配置 Firebase：只用本地
+    if (!db) {
+      setCloudOk(false);
+      setIsInitialLoadDone(true);
       return;
     }
 
-    // --- 3.2 云端记忆模式（Firestore）---
+    // 3.2 云端记忆模式：等待匿名登录后订阅 Firestore
     if (!user) return;
 
-    // 强制 6 段路径：artifacts/{appId}/users/{userId}/storage/main
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
-    
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const remoteData = sanitizeSkus(docSnap.data().items || []);
-        lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
-        setSkus(remoteData);
-        if (remoteData.length > 0) {
-          setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
+    const unsubscribe = onSnapshot(
+      docRef,
+      (docSnap) => {
+        setCloudOk(true);
+        if (docSnap.exists()) {
+          const remoteData = sanitizeSkus(docSnap.data().items || []);
+          lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
+          setSkus(remoteData);
+          if (remoteData.length > 0) {
+            setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
+          }
+        } else {
+          // 云端为空：用“本地现有/默认数据”初始化一次，避免后续刷新又回到初始
+          const bootstrap = (() => {
+            const local2 = loadLocalMemory(localKey);
+            if (local2 && Array.isArray(local2.skus) && local2.skus.length > 0) return sanitizeSkus(local2.skus);
+            return sanitizeSkus(DEFAULT_DATA);
+          })();
+          setSkus(bootstrap);
+          setSelectedSkuId(bootstrap[0]?.id ?? 1);
+          // 这里主动写入一次，确保云端 doc 被创建
+          setDoc(docRef, { items: bootstrap, lastUpdated: new Date().toISOString() }, { merge: true })
+            .then(() => { lastRemoteItemsJSONRef.current = JSON.stringify(bootstrap); })
+            .catch((e) => {
+              console.error('初始化云端存档失败:', e);
+              setCloudOk(false);
+            });
         }
-            writeLocalBackup(remoteData);
-} else {
-        // 若云端存储为空：初始化基础数据，并把“第一份默认数据”写入云端，确保刷新不会回到最初
-        const initialData = sanitizeSkus(DEFAULT_DATA);
-        lastRemoteItemsJSONRef.current = JSON.stringify(initialData);
-        setSkus(initialData);
-        setSelectedSkuId(initialData[0]?.id ?? 1);
-        writeLocalBackup(initialData);
 
-        // 关键：创建共享文档（多人共享同一份数据）
-        setDoc(
-          docRef,
-          { items: initialData, lastUpdated: serverTimestamp() },
-          { merge: true }
-        ).catch((err) => {
-          console.error('初始化云端文档失败：', err);
-          setWarning('云端初始化失败：请检查 Firestore Rules 是否允许已登录(含匿名)读写 inventory_apps/{appId}/shared/main');
-        });
+        setIsInitialLoadDone(true);
+      },
+      (err) => {
+        // 常见：Firestore 配置指向了“没有创建 Firestore 数据库”的项目，或 projectId/authDomain 填错
+        console.error('存储读取错误:', err);
+        setCloudOk(false);
+        setIsInitialLoadDone(true); // 允许继续本地使用
       }
-      setIsInitialLoadDone(true); // 锁定：标记读取已完成
-      setStatus('ready');
-    }, (err) => { 
-      console.error("存储读取错误:", err);
-      setStatus('error'); 
-    });
+    );
 
     return () => unsubscribe();
-  }, [user, appId]);
+  }, [user, appId, localKey]);
 
-  // --- 4. 自动存档逻辑（云端 + 本地备份） ---
+  // --- 4.1 本地兜底自动存档（始终开启） ---
   useEffect(() => {
+    if (skus.length === 0) return;
+    const timer = setTimeout(() => {
+      saveLocalMemory(localKey, { skus, selectedSkuId, viewMode, savedAt: Date.now() });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [skus, selectedSkuId, viewMode, localKey]);
+
+  // --- 4.2 云端自动存档（多人共享） ---
+  useEffect(() => {
+    if (!db || !user || !cloudOk) return;
     // 防丢保护：必须完成初始读取、且数据不为空才允许写回
     if (!isInitialLoadDone || skus.length === 0) return;
 
-    // 先写本地备份（即使云端失败，刷新也不丢）
-    const localTimer = setTimeout(() => {
-      writeLocalBackup(skus);
-    }, 300);
-
-    // 如果未启用云端，直接结束
-    if (!db) return () => clearTimeout(localTimer);
-// 若启用了 Firestore，则写回云端
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
-
-    // 如果本次 skus 其实就是刚从云端同步下来的同一份数据，就不要再写回（防循环）
     const localJSON = JSON.stringify(skus);
-    if (localJSON !== lastRemoteItemsJSONRef.current) {
-      const remoteTimer = setTimeout(async () => {
-        try {
-          await setDoc(
-            docRef,
-            { items: skus, lastUpdated: serverTimestamp() },
-            { merge: true }
-          );
-        } catch (err) {
-          console.error('自动云端存档失败:', err);
-        }
-      }, 1000);
+    if (localJSON === lastRemoteItemsJSONRef.current) return;
 
-      return () => {
-        clearTimeout(localTimer);
-        clearTimeout(remoteTimer);
-      };
-    }
+    const remoteTimer = setTimeout(async () => {
+      try {
+        await setDoc(docRef, { items: skus, lastUpdated: new Date().toISOString() }, { merge: true });
+        lastRemoteItemsJSONRef.current = localJSON;
+      } catch (err) {
+        console.error('自动云端存档失败:', err);
+        setCloudOk(false); // 自动降级本地，避免用户误以为云端成功
+      }
+    }, 1000);
 
-    return () => clearTimeout(localTimer);
-  }, [skus, selectedSkuId, viewMode, user, isInitialLoadDone, appId, db]);
+    return () => clearTimeout(remoteTimer);
+  }, [skus, user, cloudOk, isInitialLoadDone, appId, db]);
 
   // --- 5. 业务操作 ---
   const activeSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || (skus[0]?.id))) || null, [skus, selectedSkuId]);
