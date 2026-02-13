@@ -21,21 +21,40 @@ import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
 // 说明：
 // - 若存在 __firebase_config，则启用 Firestore“记忆引擎”（原逻辑保留）。
 // - 若不存在，则启用 localStorage 本地记忆（用户要求：浏览器修改后自动本地同步）。
-let db = null, auth = null, appId = 'inventory-app';
+let db = null, auth = null;
+
+// 你可以改这个名字：同一个 appId 就代表同一个“共享空间”
+let appId = (import.meta.env.VITE_APP_ID || 'inventory-app').replace(/\//g, '_');
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+};
+
+// 是否启用 Firebase（没配就走 localStorage）
+const hasFirebase =
+  !!firebaseConfig.apiKey &&
+  !!firebaseConfig.authDomain &&
+  !!firebaseConfig.projectId &&
+  !!firebaseConfig.storageBucket &&
+  !!firebaseConfig.messagingSenderId &&
+  !!firebaseConfig.appId;
+
 try {
-  if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-    const firebaseConfig = JSON.parse(__firebase_config);
+  if (hasFirebase) {
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
     auth = getAuth(app);
     db = getFirestore(app);
   }
-  // 关键修复：归一化处理 appId，确保路径为偶数段（6段）
-  const rawId = typeof __app_id !== 'undefined' ? __app_id : 'inventory-app';
-  appId = rawId.replace(/\//g, '_'); 
-} catch (e) { 
-  console.warn("数据引擎初始化异常，当前为临时会话模式"); 
+} catch (e) {
+  console.warn('Firebase 初始化失败，将回退本地记忆模式：', e);
+  db = null;
+  auth = null;
 }
-
 // --- 1.1 本地记忆配置 ---
 const LOCAL_STORAGE_KEY = `inventory_forecast:${appId}:main_v1`;
 
@@ -122,6 +141,7 @@ const App = () => {
 
   // 防止 React.StrictMode 下开发环境 effect 双触发导致“重复初始化”
   const hydratedRef = useRef(false);
+  const lastRemoteItemsJSONRef = useRef('');
 
   const transportOptions = [
     { value: 'sea', label: '海运', icon: Ship },
@@ -209,11 +229,12 @@ const App = () => {
     if (!user) return;
 
     // 强制 6 段路径：artifacts/{appId}/users/{userId}/storage/main
-    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'inventory_storage', 'main_data');
+    const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
     
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const remoteData = sanitizeSkus(docSnap.data().items || []);
+        lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
         setSkus(remoteData);
         if (remoteData.length > 0) {
           setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
@@ -246,16 +267,25 @@ const App = () => {
 
     // 4.2 若启用了 Firestore，则同时写回云端（作为增强备份/多端同步）
     let remoteTimer = null;
-    if (db && user) {
-      const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'inventory_storage', 'main_data');
-      remoteTimer = setTimeout(async () => {
-        try {
-          await setDoc(docRef, { items: skus, lastUpdated: new Date().toISOString() }, { merge: true });
-        } catch (err) {
-          console.error('自动云端存档失败:', err);
-        }
-      }, 1000);
-    }
+   if (db) {
+  const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
+
+  // 如果本次 skus 其实就是刚从云端同步下来的同一份数据，就不要再写回（防循环）
+  const localJSON = JSON.stringify(skus);
+  if (localJSON !== lastRemoteItemsJSONRef.current) {
+    remoteTimer = setTimeout(async () => {
+      try {
+        await setDoc(
+          docRef,
+          { items: skus, lastUpdated: new Date().toISOString() },
+          { merge: true }
+        );
+      } catch (err) {
+        console.error('自动云端存档失败:', err);
+      }
+    }, 1000);
+  }
+}
 
     return () => {
       clearTimeout(localTimer);
