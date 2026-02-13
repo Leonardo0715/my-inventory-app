@@ -82,7 +82,7 @@ function sanitizeSkus(items) {
         leg1Days: Number(po.leg1Days ?? 0),
         leg2Mode: ['sea', 'air', 'rail'].includes(po.leg2Mode) ? po.leg2Mode : 'sea',
         leg2Days: Number(po.leg2Days ?? 0),
-        status: ['pre_order', 'ordered', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'bonded_warehouse', 'pending_shelving', 'shelved'].includes(po.status) ? po.status : 'ordered',
+        status: ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].includes(po.status) ? po.status : 'ordered',
       }));
       return { id, name, currentStock, monthlySales, pos };
     });
@@ -110,6 +110,8 @@ const App = () => {
   const [showQuickFill, setShowQuickFill] = useState(false);
   const [quickFillValue, setQuickFillValue] = useState('');
   const [poSortBy, setPoSortBy] = useState('orderDate'); // 'orderDate' 或 'arrivalDate'
+  const [expandedPoId, setExpandedPoId] = useState(null); // 展开的采购单ID
+  const [poFilter, setPoFilter] = useState('all'); // 'all', 'pending', 'completed'
 
   // 设置状态 - 运输方式（可扩展）
   const [transportModes, setTransportModes] = useState([
@@ -749,7 +751,7 @@ const App = () => {
                              <div className="grid grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 animate-in slide-in-from-top-2">
                                {(activeSku.monthlySales || Array(12).fill(0)).map((v, i) => (
                                  <div key={i}>
-                                   <label className="text-[9px] text-slate-400 font-bold block mb-1">{i+1}月</label>
+                                   <label className="text-[10px] text-slate-400 font-bold block mb-2">{i+1}月</label>
                                    <input
                                      type="number"
                                      value={v}
@@ -758,7 +760,7 @@ const App = () => {
                                        n[i] = clampNonNegativeInt(e.target.value, '月度销量');
                                        updateSku(activeSku.id, 'monthlySales', n);
                                      }}
-                                     className="w-full text-xs p-2 border rounded-xl font-bold"
+                                     className="w-full text-sm p-2.5 border rounded-lg font-bold"
                                    />
                                  </div>
                                ))}
@@ -773,147 +775,205 @@ const App = () => {
                           <div className="flex justify-between items-center mb-3">
                             <h3 className="text-lg font-bold flex items-center gap-3 text-slate-700 tracking-tighter uppercase"><Clock className="text-indigo-600"/> 详细采购 PO</h3>
                             <div className="flex items-center gap-2">
-                              <button onClick={exportPOsToJSON} className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出 JSON">JSON</button>
-                              <button onClick={exportPOsToCSV} className="text-[10px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出 CSV">CSV</button>
-                              <button onClick={importPOsFromJSON} className="text-[10px] px-2 py-1 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 font-bold uppercase tracking-tighter" title="导入 JSON">导入</button>
+                              <div className="flex items-center gap-1 border border-slate-200 rounded-lg p-1 bg-slate-50">
+                                <button 
+                                  onClick={() => setPoFilter('all')} 
+                                  className={`text-[11px] px-3 py-1.5 rounded-md font-bold uppercase tracking-tighter transition-colors ${poFilter === 'all' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-transparent text-slate-600 hover:text-slate-900'}`} 
+                                  title="显示所有采购单"
+                                >
+                                  全部
+                                </button>
+                                <button 
+                                  onClick={() => setPoFilter('pending')} 
+                                  className={`text-[11px] px-3 py-1.5 rounded-md font-bold uppercase tracking-tighter transition-colors ${poFilter === 'pending' ? 'bg-yellow-500 text-white shadow-sm' : 'bg-transparent text-slate-600 hover:text-slate-900'}`} 
+                                  title="显示待完成采购单"
+                                >
+                                  待完成
+                                </button>
+                                <button 
+                                  onClick={() => setPoFilter('completed')} 
+                                  className={`text-[11px] px-3 py-1.5 rounded-md font-bold uppercase tracking-tighter transition-colors ${poFilter === 'completed' ? 'bg-emerald-600 text-white shadow-sm' : 'bg-transparent text-slate-600 hover:text-slate-900'}`} 
+                                  title="显示已完成采购单"
+                                >
+                                  已完成
+                                </button>
+                              </div>
+                              <button onClick={exportPOsToJSON} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出 JSON">JSON</button>
+                              <button onClick={exportPOsToCSV} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出 CSV">CSV</button>
+                              <button onClick={importPOsFromJSON} className="text-[11px] px-2 py-1 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 font-bold uppercase tracking-tighter" title="导入 JSON">导入</button>
                               <button onClick={() => addPO(activeSku.id)} className="bg-indigo-600 text-white p-2 rounded-xl hover:bg-indigo-700 active:scale-90 transition-all shadow-md"><Plus size={18}/></button>
                             </div>
                           </div>
                           {activeSku?.pos && activeSku.pos.length > 0 && (
-                            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                            <div className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">
                               共 {activeSku.pos.length} 条采购单 · 支持复制上一条快速录入
                             </div>
                           )}
                         </div>
-                        <div className="space-y-4 overflow-y-auto pr-2" style={{ maxHeight: 'calc(100vh - 500px)' }}>
-                           {(!activeSku?.pos || activeSku.pos.length === 0) && <div className="text-center py-10 text-slate-300 font-bold italic border-2 border-dashed border-slate-100 rounded-3xl text-xs">暂无在途订单数据</div>}
-                           {activeSku?.pos?.map(po => {
-                             // 验检 1.5 个月生产排期预警（45天）
-                             const prodDeadline = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays) * 86400000);
-                             const daysUntilDeadline = (prodDeadline - new Date()) / 86400000;
-                             const isInProdWarning = po.status === 'in_production' && daysUntilDeadline > 0 && daysUntilDeadline <= 45;
+                        <div className="space-y-3 overflow-y-auto pr-2" style={{ maxHeight: 'calc(100vh - 500px)' }}>
+                           {(!activeSku?.pos || activeSku.pos.length === 0) && <div className="text-center py-10 text-slate-300 font-bold italic border-2 border-dashed border-slate-100 rounded-3xl text-sm">暂无在途订单数据</div>}
+                           {activeSku?.pos?.filter(po => {
+                             // 筛选逻辑：待完成（未shelved）/ 已完成（shelved）
+                             if (poFilter === 'pending') return po.status !== 'shelved' && po.status !== 'pre_order' && po.status !== 'cancelled';
+                             if (poFilter === 'completed') return po.status === 'shelved';
+                             return true; // all
+                           }).map(po => {
+                             // 计算预警：距离生产完成日期1.5个月（45天）内
+                             const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays) * 86400000);
+                             const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
+                             const isProductionWarning = po.status !== 'cancelled' && po.status !== 'pre_order' && po.status !== 'shelved' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
+                             const isExpanded = expandedPoId === po.id;
                              
                              return (
-                             <div key={po.id} className={`rounded-xl relative group border transition-all ${isInProdWarning ? 'bg-red-50 border-red-300 shadow-md shadow-red-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'} p-4`}>
-                                {isInProdWarning && (
+                             <div key={po.id} className={`rounded-xl relative group border transition-all ${isProductionWarning ? 'bg-red-50 border-red-300 shadow-md shadow-red-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'} p-4`}>
+                                {isProductionWarning && (
                                   <div className="mb-3 bg-red-100 border border-red-300 rounded-lg px-3 py-2 flex items-center gap-2">
                                     <AlertTriangle size={14} className="text-red-600 flex-shrink-0" />
-                                    <span className="text-[10px] font-black text-red-700">⚠️ 生产排期预警：还有 {Math.ceil(daysUntilDeadline)} 天完成生产！</span>
+                                    <span className="text-[11px] font-black text-red-700">⚠️ 交期预警：距离生产完成仅 {Math.ceil(daysUntilProdEnd)} 天！</span>
                                   </div>
                                 )}
-                                <div className="mb-3 pb-3 border-b border-slate-200">
-                                  <label className="text-[9px] font-black text-slate-400 block mb-1">PO 号</label>
+                                <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-200">
+                                  <button 
+                                    onClick={() => setExpandedPoId(isExpanded ? null : po.id)}
+                                    className="flex items-center gap-2 flex-1 text-left hover:opacity-70 transition-opacity"
+                                  >
+                                    <span className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                    <label className="text-[10px] font-black text-slate-400 block">PO 号</label>
+                                  </button>
+                                  <span className="text-sm font-black text-indigo-700 bg-indigo-50 rounded-lg px-3 py-1.5">{po.poNumber}</span>
+                                </div>
+                                {!isExpanded && (
+                                  <div className="grid grid-cols-3 gap-3 mb-1 text-[12px]">
+                                    <div>
+                                      <label className="text-[10px] font-black text-slate-400 block mb-1.5">下单日期</label>
+                                      <span className="font-mono text-slate-600 text-sm">{po.orderDate}</span>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-black text-slate-400 block mb-1.5">采购数量</label>
+                                      <span className="font-black text-indigo-600 font-mono text-sm">{po.qty}</span>
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-black text-slate-400 block mb-1.5">采购状态</label>
+                                      <span className="text-[11px] font-black bg-slate-100 rounded px-2.5 py-1.5">{['预下订单', '已下单', '取消订单', '生产中', '生产完成', '头程发货', '头程到货', '二程发货', '二程到货', '查验中', '提货中', '到达保税仓', '待理货上架', '已理货上架'].find((_, i) => ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'][i] === po.status) || po.status}</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {isExpanded && (
+                                  <>
                                   <input 
                                     type="text" 
                                     value={po.poNumber} 
                                     onChange={e => updatePO(activeSku.id, po.id, 'poNumber', e.target.value)} 
-                                    className="text-sm font-black text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2 w-full outline-none border border-indigo-200 focus:border-indigo-400 transition-colors" 
+                                    className="text-sm font-black text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2.5 w-full outline-none border border-indigo-200 focus:border-indigo-400 transition-colors mb-3" 
                                   />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4 mb-4 font-bold uppercase">
-                                  <div>
-                                    <label className="text-[9px] font-black text-slate-400 block mb-1">下单日期</label>
-                                    <input type="date" value={po.orderDate} onChange={e => updatePO(activeSku.id, po.id, 'orderDate', e.target.value)} className="text-xs text-slate-600 bg-transparent outline-none" />
+                                  <div className="grid grid-cols-2 gap-3 mb-3 font-bold uppercase">
+                                    <div>
+                                      <label className="text-[10px] font-black text-slate-400 block mb-1.5">下单日期</label>
+                                      <input type="date" value={po.orderDate} onChange={e => updatePO(activeSku.id, po.id, 'orderDate', e.target.value)} className="text-sm text-slate-600 bg-transparent outline-none" />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-black text-slate-400 block mb-1.5">采购单状态</label>
+                                      <select 
+                                        value={po.status || 'ordered'} 
+                                        onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)}
+                                        className="text-sm font-black bg-slate-100 rounded px-2 py-1 border border-slate-300 focus:outline-none focus:border-indigo-500"
+                                      >
+                                        <option value="pre_order">预下订单</option>
+                                        <option value="ordered">已下单</option>
+                                        <option value="cancelled">取消订单</option>
+                                        <option value="in_production">生产中</option>
+                                        <option value="prod_complete">生产完成</option>
+                                        <option value="leg1_shipped">头程发货</option>
+                                        <option value="leg1_arrived">头程到货</option>
+                                        <option value="leg2_shipped">二程发货</option>
+                                        <option value="leg2_arrived">二程到货</option>
+                                        <option value="inspecting">查验中</option>
+                                        <option value="picking">提货中</option>
+                                        <option value="bonded_warehouse">到达保税仓</option>
+                                        <option value="pending_shelving">待理货上架</option>
+                                        <option value="shelved">已理货上架</option>
+                                      </select>
+                                    </div>
                                   </div>
-                                  <div>
-                                    <label className="text-[9px] font-black text-slate-400 block mb-1">采购单状态</label>
-                                    <select 
-                                      value={po.status || 'ordered'} 
-                                      onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)}
-                                      className="text-xs font-black bg-slate-100 rounded px-2 py-1 border border-slate-300 focus:outline-none focus:border-indigo-500"
-                                    >
-                                      <option value="pre_order">预下订单</option>
-                                      <option value="ordered">已下单</option>
-                                      <option value="in_production">生产中</option>
-                                      <option value="prod_complete">生产完成</option>
-                                      <option value="leg1_shipped">头程发货</option>
-                                      <option value="leg1_arrived">头程到货</option>
-                                      <option value="leg2_shipped">二程发货</option>
-                                      <option value="leg2_arrived">二程到货</option>
-                                      <option value="inspecting">查验中</option>
-                                      <option value="bonded_warehouse">到达保税仓</option>
-                                      <option value="pending_shelving">待理货上架</option>
-                                      <option value="shelved">已理货上架</option>
-                                    </select>
+                                  <div className="grid grid-cols-2 gap-3 mb-3 font-bold uppercase">
+                                    <div>
+                                      <label className="text-[10px] font-black text-slate-400 block mb-1.5"></label>
+                                    </div>
+                                    <div className="text-right">
+                                      <label className="text-[10px] font-black text-slate-400 block mb-1.5 text-right">采购数量</label>
+                                      <input
+                                        type="number"
+                                        value={po.qty}
+                                        onChange={e => updatePO(activeSku.id, po.id, 'qty', clampNonNegativeInt(e.target.value, '采购数量'))}
+                                        className="text-indigo-600 font-black bg-transparent w-full text-right outline-none font-mono text-sm"
+                                      />
+                                    </div>
                                   </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4 mb-4 font-bold uppercase">
-                                  <div>
-                                    <label className="text-[9px] font-black text-slate-400 block mb-1"></label>
+                                  <div className="space-y-1.5 bg-white/50 p-3 rounded-xl border border-slate-100 text-[11px] font-bold">
+                                     <div className="flex justify-between items-center text-slate-500">
+                                        <span className="uppercase tracking-tighter"><Factory size={11} className="inline mr-1"/>生产周期</span>
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="number"
+                                            value={po.prodDays}
+                                            onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
+                                            className="w-8 text-right bg-transparent border-b border-slate-200"
+                                          />天
+                                        </div>
+                                     </div>
+                                     <div className="flex justify-between items-center text-blue-600">
+                                        <span className="flex items-center gap-1 uppercase tracking-tighter">
+                                          <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>时效 (头程)
+                                        </span>
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="number"
+                                            value={po.leg1Days}
+                                            onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
+                                            className="w-8 text-right bg-transparent border-b border-blue-100"
+                                          />天
+                                        </div>
+                                     </div>
+                                     <div className="flex justify-between items-center text-orange-600">
+                                        <span className="flex items-center gap-1 uppercase tracking-tighter">
+                                          <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>时效 (二程)
+                                        </span>
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="number"
+                                            value={po.leg2Days}
+                                            onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
+                                            className="w-8 text-right bg-transparent border-b border-orange-100"
+                                          />天
+                                        </div>
+                                     </div>
                                   </div>
-                                  <div className="text-right">
-                                    <label className="text-[9px] font-black text-slate-400 block mb-1 text-right">采购数量</label>
-                                    <input
-                                      type="number"
-                                      value={po.qty}
-                                      onChange={e => updatePO(activeSku.id, po.id, 'qty', clampNonNegativeInt(e.target.value, '采购数量'))}
-                                      className="text-indigo-600 font-black bg-transparent w-full text-right outline-none font-mono"
-                                    />
+                                  <div className="mt-3 flex items-center justify-between">
+                                    <div className="text-[11px] font-black text-indigo-500 uppercase tracking-tighter italic leading-none">
+                                      预计到货日: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)) * 86400000).toLocaleDateString()}
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <button 
+                                        onClick={() => duplicatePO(activeSku.id, po.id)} 
+                                        className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors" 
+                                        title="复制此采购单"
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                        </svg>
+                                      </button>
+                                      <button 
+                                        onClick={() => removePO(activeSku.id, po.id)} 
+                                        className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors" 
+                                        title="删除此采购单"
+                                      >
+                                        <Trash2 size={14}/>
+                                      </button>
+                                    </div>
                                   </div>
-                                </div>
-                                <div className="space-y-2 bg-white/50 p-3 rounded-xl border border-slate-100 text-[10px] font-bold">
-                                   <div className="flex justify-between items-center text-slate-500">
-                                      <span className="uppercase tracking-tighter"><Factory size={10} className="inline mr-1"/>生产周期</span>
-                                      <div className="flex items-center gap-1">
-                                        <input
-                                          type="number"
-                                          value={po.prodDays}
-                                          onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
-                                          className="w-8 text-right bg-transparent border-b border-slate-200"
-                                        />天
-                                      </div>
-                                   </div>
-                                   <div className="flex justify-between items-center text-blue-600">
-                                      <span className="flex items-center gap-1 uppercase tracking-tighter">
-                                        <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>时效 (头程)
-                                      </span>
-                                      <div className="flex items-center gap-1">
-                                        <input
-                                          type="number"
-                                          value={po.leg1Days}
-                                          onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
-                                          className="w-8 text-right bg-transparent border-b border-blue-100"
-                                        />天
-                                      </div>
-                                   </div>
-                                   <div className="flex justify-between items-center text-orange-600">
-                                      <span className="flex items-center gap-1 uppercase tracking-tighter">
-                                        <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>时效 (二程)
-                                      </span>
-                                      <div className="flex items-center gap-1">
-                                        <input
-                                          type="number"
-                                          value={po.leg2Days}
-                                          onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
-                                          className="w-8 text-right bg-transparent border-b border-orange-100"
-                                        />天
-                                      </div>
-                                   </div>
-                                </div>
-                                <div className="mt-3 flex items-center justify-between">
-                                  <div className="text-[10px] font-black text-indigo-500 uppercase tracking-tighter italic leading-none">
-                                    预计到货日: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)) * 86400000).toLocaleDateString()}
-                                  </div>
-                                  <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button 
-                                      onClick={() => duplicatePO(activeSku.id, po.id)} 
-                                      className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors" 
-                                      title="复制此采购单"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                                      </svg>
-                                    </button>
-                                    <button 
-                                      onClick={() => removePO(activeSku.id, po.id)} 
-                                      className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors" 
-                                      title="删除此采购单"
-                                    >
-                                      <Trash2 size={14}/>
-                                    </button>
-                                  </div>
-                                </div>
+                                  </>
+                                )}
                              </div>
                              );
                            })}
