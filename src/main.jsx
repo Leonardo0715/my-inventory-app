@@ -36,14 +36,15 @@ const firebaseConfig = {
 };
 
 // 是否启用 Firebase（没配就走 localStorage）
-const hasFirebase =
-  !!firebaseConfig.apiKey &&
-  !!firebaseConfig.authDomain &&
-  !!firebaseConfig.projectId &&
-  !!firebaseConfig.storageBucket &&
-  !!firebaseConfig.messagingSenderId &&
-  !!firebaseConfig.appId;
+const missingFirebaseEnv = [];
+if (!firebaseConfig.apiKey) missingFirebaseEnv.push('VITE_FIREBASE_API_KEY');
+if (!firebaseConfig.authDomain) missingFirebaseEnv.push('VITE_FIREBASE_AUTH_DOMAIN');
+if (!firebaseConfig.projectId) missingFirebaseEnv.push('VITE_FIREBASE_PROJECT_ID');
+if (!firebaseConfig.storageBucket) missingFirebaseEnv.push('VITE_FIREBASE_STORAGE_BUCKET');
+if (!firebaseConfig.messagingSenderId) missingFirebaseEnv.push('VITE_FIREBASE_MESSAGING_SENDER_ID');
+if (!firebaseConfig.appId) missingFirebaseEnv.push('VITE_FIREBASE_APP_ID');
 
+const hasFirebase = missingFirebaseEnv.length === 0;
 try {
   if (hasFirebase) {
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
@@ -179,7 +180,9 @@ const App = () => {
   });
 
   const memoryModeText = !db
-    ? '离线模式（仅本地记忆）'
+    ? (missingFirebaseEnv.length
+        ? `离线模式（缺少：${missingFirebaseEnv.join(', ')}）`
+        : '离线模式（仅本地记忆）')
     : (cloudOk ? '云端同步已启用（多人共享）' : '云端连接异常：已降级本地');
 
   // 生成 PO 号的函数
