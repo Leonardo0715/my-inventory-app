@@ -730,7 +730,6 @@ const App = () => {
   const activeForecast = useMemo(() => generateForecast(activeSku, 365), [activeSku, warningDays]);
   const dashboardData = useMemo(() => skus.map(sku => {
     const f = generateForecast(sku, 400);
-    const firstStockOut = f.data.find(d => d.stock <= 0);
     let orderDateStr = "安全";
     let urgency = 'normal', suggestQty = 0;
     let daysUntilStockout = 400; // 默认400天
@@ -738,28 +737,54 @@ const App = () => {
     let riskLevel = 'safe'; // 'safe' (绿) / 'warning' (黄) / 'critical' (红)
     let riskText = '12月+ 安全';
     
-    if (firstStockOut) {
-      daysUntilStockout = f.data.findIndex(d => d.stock <= 0);
-      monthsUntilStockout = (daysUntilStockout / 30).toFixed(1);
+    // 查找关键日期：断货时间 或 库存恢复时间
+    const firstStockOut = f.data.findIndex(d => d.stock <= 0);
+    let targetDayIndex = 400; // 默认安全
+    
+    if (firstStockOut >= 0) {
+      // 有断货事件
+      targetDayIndex = firstStockOut; // 默认是断货日期
       
-      // 根据断货月数判断风险等级
-      if (monthsUntilStockout >= 12) {
-        riskLevel = 'safe';
-        riskText = `${monthsUntilStockout}月 安全`;
-      } else if (monthsUntilStockout >= 6) {
-        riskLevel = 'warning';
-        riskText = `${monthsUntilStockout}月 预警`;
-      } else {
-        riskLevel = 'critical';
-        riskText = `${monthsUntilStockout}月 紧急`;
+      // 检查断货后是否会恢复（有采购单补货）
+      const recoveryPoint = f.data.slice(firstStockOut).findIndex((d, idx) => 
+        idx > 0 && d.stock > 0 && f.data[firstStockOut + idx - 1].stock <= 0
+      );
+      
+      if (recoveryPoint >= 0) {
+        // 库存会恢复，计算恢复后的覆盖天数
+        const recoveryDayIndex = firstStockOut + recoveryPoint;
+        const recoveryStock = f.data[recoveryDayIndex].stock;
+        // 从恢复点开始计算还能覆盖多少天
+        const remainingDays = f.data.slice(recoveryDayIndex).findIndex(d => d.stock <= 0);
+        targetDayIndex = recoveryDayIndex + (remainingDays >= 0 ? remainingDays : 100);
       }
-      
-      const d = new Date(new Date(firstStockOut.date).getTime() - warningDays * 86400000);
+    }
+    
+    daysUntilStockout = Math.max(0, targetDayIndex);
+    monthsUntilStockout = (daysUntilStockout / 30).toFixed(1);
+    
+    // 根据覆盖月数判断风险等级
+    if (monthsUntilStockout >= 12) {
+      riskLevel = 'safe';
+      riskText = `${monthsUntilStockout}月 安全`;
+    } else if (monthsUntilStockout >= 6) {
+      riskLevel = 'warning';
+      riskText = `${monthsUntilStockout}月 预警`;
+    } else {
+      riskLevel = 'critical';
+      riskText = `${monthsUntilStockout}月 紧急`;
+    }
+    
+    // 订单决策计算
+    const firstStockOutData = f.data.find(d => d.stock <= 0);
+    if (firstStockOutData) {
+      const d = new Date(new Date(firstStockOutData.date).getTime() - warningDays * 86400000);
       orderDateStr = d.toLocaleDateString();
       if (d < new Date()) urgency = 'critical';
       suggestQty = f.currentMonthRate * warningDays;
     }
-    return { ...sku, forecast: f, firstStockOut, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText };
+    
+    return { ...sku, forecast: f, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText };
   }), [skus, warningDays]);
 
   const coverageSummary = useMemo(() => {
