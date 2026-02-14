@@ -170,6 +170,7 @@ const App = () => {
   const [poSortBy, setPoSortBy] = useState('orderDate'); // 'orderDate' 或 'arrivalDate'
   const [expandedPoId, setExpandedPoId] = useState(null); // 展开的采购单ID
   const [poFilter, setPoFilter] = useState('all'); // 'all', 'pending', 'completed'
+  const [dashboardTheme, setDashboardTheme] = useState('dark'); // 'dark' 或 'light'
 
   // 设置状态 - 运输方式（可扩展）
   const [transportModes, setTransportModes] = useState([
@@ -1318,69 +1319,78 @@ const App = () => {
         </>
       ) : (
         /* --- 战略全景大屏 --- */
-        <div className="flex-1 flex flex-col bg-slate-950 text-white overflow-hidden p-6">
+        <div className={`flex-1 flex flex-col overflow-hidden p-6 transition-colors ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
           <div className="flex justify-between items-start mb-6 flex-shrink-0">
             <div className="flex items-start gap-8">
               <div className="flex items-center gap-6">
-                <div className="h-20 w-20 bg-indigo-600 rounded-[2rem] flex items-center justify-center shadow-2xl shadow-indigo-500/50 transform rotate-3">
+                <div className={`h-20 w-20 rounded-[2rem] flex items-center justify-center shadow-2xl transform rotate-3 ${dashboardTheme === 'dark' ? 'bg-indigo-600 shadow-indigo-500/50' : 'bg-indigo-500 shadow-indigo-300/50'}`}>
                   <BarChart3 size={40}/>
                 </div>
                 <div>
                   <h1 className="text-5xl font-black italic tracking-tighter uppercase">Strategic Command</h1>
-                  <p className="text-indigo-500 font-bold uppercase tracking-[0.4em] text-[11px] mt-1 italic">
+                  <p className={`font-bold uppercase tracking-[0.4em] text-[11px] mt-1 italic ${dashboardTheme === 'dark' ? 'text-indigo-500' : 'text-indigo-600'}`}>
                     Deductive Engine: {warningDays}-Day Safe protocol active
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4 text-[11px]">
-                <div className="bg-slate-900/70 border border-rose-500/60 rounded-2xl px-5 py-3 shadow-xl">
-                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-rose-300 mb-1">
+                <div className={`rounded-2xl px-5 py-3 shadow-xl border-2 ${dashboardTheme === 'dark' ? 'bg-slate-900/70 border-rose-500/60' : 'bg-red-50 border-red-200'}`}>
+                  <div className={`text-[9px] font-black uppercase tracking-[0.2em] mb-1 ${dashboardTheme === 'dark' ? 'text-rose-300' : 'text-red-700'}`}>
                     未来一年内将断货 SKU
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-black text-rose-400">
+                    <span className={`text-3xl font-black ${dashboardTheme === 'dark' ? 'text-rose-400' : 'text-red-600'}`}>
                       {fleetKpi.stockoutWithinHorizon}
                     </span>
-                    <span className="text-[10px] font-bold text-slate-400">条 / {skus.length} 条在管</span>
+                    <span className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>条 / {skus.length} 条在管</span>
                   </div>
                 </div>
-                <div className="bg-slate-900/70 border border-amber-400/60 rounded-2xl px-5 py-3 shadow-xl">
-                  <div className="text-[9px] font-black uppercase tracking-[0.2em] text-amber-200 mb-1">
+                <div className={`rounded-2xl px-5 py-3 shadow-xl border-2 ${dashboardTheme === 'dark' ? 'bg-slate-900/70 border-amber-400/60' : 'bg-amber-50 border-amber-200'}`}>
+                  <div className={`text-[9px] font-black uppercase tracking-[0.2em] mb-1 ${dashboardTheme === 'dark' ? 'text-amber-200' : 'text-amber-700'}`}>
                     未来 {fleetKpi.orderWindowDays} 天需决策下单 SKU
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-black text-amber-300">
+                    <span className={`text-3xl font-black ${dashboardTheme === 'dark' ? 'text-amber-300' : 'text-amber-600'}`}>
                       {fleetKpi.needOrderSoon}
                     </span>
-                    <span className="text-[10px] font-bold text-slate-400">条 · 含红色紧急窗口</span>
+                    <span className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>条 · 含红色紧急窗口</span>
                   </div>
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => setViewMode('detail')}
-              className="bg-slate-900 border-2 border-slate-800 px-10 py-4 rounded-[1.5rem] font-black hover:bg-slate-800 transition-all active:scale-95 flex items-center gap-4 text-xs uppercase tracking-widest shadow-2xl"
-            >
-              <List size={20}/> 返回指挥中心视角
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setDashboardTheme(dashboardTheme === 'dark' ? 'light' : 'dark')}
+                className={`px-4 py-3 rounded-[1.5rem] font-black transition-all active:scale-95 flex items-center gap-2 text-xs uppercase tracking-widest shadow-lg border-2 ${dashboardTheme === 'dark' ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-white border-gray-300 hover:bg-gray-100 text-slate-900'}`}
+                title={dashboardTheme === 'dark' ? '切换至白天模式' : '切换至黑夜模式'}
+              >
+                {dashboardTheme === 'dark' ? '☀️ 白天' : '🌙 黑夜'}
+              </button>
+              <button
+                onClick={() => setViewMode('detail')}
+                className={`px-10 py-4 rounded-[1.5rem] font-black transition-all active:scale-95 flex items-center gap-4 text-xs uppercase tracking-widest shadow-2xl border-2 ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-white' : 'bg-white border-gray-300 hover:bg-gray-100 text-slate-900'}`}
+              >
+                <List size={20}/> 返回指挥中心视角
+              </button>
+            </div>
           </div>
 
           {/* 采购单总览表 */}
-          <div className="mb-6 bg-slate-900/50 rounded-3xl border border-slate-800 p-6 shadow-inner">
-            <div className="flex justify-between items-center mb-4 pb-4 border-b border-slate-700">
-              <h3 className="text-lg font-black text-slate-200 flex items-center gap-3">
+          <div className={`mb-6 rounded-3xl border p-6 shadow-inner ${dashboardTheme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-gray-200'}`}>
+            <div className={`flex justify-between items-center mb-4 pb-4 border-b ${dashboardTheme === 'dark' ? 'border-slate-700' : 'border-gray-200'}`}>
+              <h3 className={`text-lg font-black flex items-center gap-3 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-900'}`}>
                 📦 全部采购单总览
               </h3>
               <div className="flex gap-3">
                 <button
                   onClick={() => setPoSortBy('orderDate')}
-                  className={`px-4 py-2 rounded-lg text-xs font-black transition-colors ${poSortBy === 'orderDate' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                  className={`px-4 py-2 rounded-lg text-xs font-black transition-colors ${poSortBy === 'orderDate' ? 'bg-indigo-600 text-white' : dashboardTheme === 'dark' ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                 >
                   按下单时间
                 </button>
                 <button
                   onClick={() => setPoSortBy('arrivalDate')}
-                  className={`px-4 py-2 rounded-lg text-xs font-black transition-colors ${poSortBy === 'arrivalDate' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                  className={`px-4 py-2 rounded-lg text-xs font-black transition-colors ${poSortBy === 'arrivalDate' ? 'bg-indigo-600 text-white' : dashboardTheme === 'dark' ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
                 >
                   按到货时间
                 </button>
@@ -1471,35 +1481,41 @@ const App = () => {
             })()}
           </div>
 
-          <div className="flex-1 overflow-auto bg-slate-900/50 rounded-3xl border border-slate-800 p-6 shadow-inner min-h-0">
+          <div className={`flex-1 overflow-auto rounded-3xl border p-6 shadow-inner min-h-0 ${dashboardTheme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-gray-200'}`}>
              <table className="w-full text-left border-collapse min-w-[1600px]">
                 <thead>
-                   <tr className="text-slate-600 text-[11px] uppercase font-black tracking-widest border-b border-slate-800/50 pb-8">
-                      <th className="pb-8 pl-8 w-80 text-left">SKU 名称 / 全球 Reference</th><th className="pb-8 text-center font-black">实时库存</th><th className="pb-8 text-center font-black">断货预测日</th><th className="pb-8 bg-indigo-950/30 text-center rounded-t-[2.5rem] border-x border-indigo-900/20 shadow-xl font-black">下单决策 (T-{warningDays}D)</th>
+                   <tr className={`text-[11px] uppercase font-black tracking-widest border-b pb-8 ${dashboardTheme === 'dark' ? 'text-slate-600 border-slate-800/50' : 'text-gray-600 border-gray-300'}`}>
+                      <th className={`pb-8 pl-8 w-80 text-left ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-600'}`}>SKU 名称 / 全球 Reference</th>
+                      <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-600'}`}>实时库存</th>
+                      <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-600'}`}>断货预测日</th>
+                      <th className={`pb-8 text-center rounded-t-[2.5rem] border-x font-black shadow-xl ${dashboardTheme === 'dark' ? 'bg-indigo-950/30 border-indigo-900/20' : 'bg-indigo-100 border-indigo-200'}`}>下单决策 (T-{warningDays}D)</th>
                       {Array.from({length: 12}).map((_, i) => {
                         const d = new Date(); d.setMonth(d.getMonth() + i);
-                        return <th key={i} className="pb-8 text-center w-28 text-slate-400 font-black tracking-tighter">{(d.getMonth() + 1)}月预演</th>
+                        return <th key={i} className={`pb-8 text-center w-28 font-black tracking-tighter ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>{(d.getMonth() + 1)}月预演</th>
                       })}
                    </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/50">
+                <tbody className={`divide-y ${dashboardTheme === 'dark' ? 'divide-slate-800/50' : 'divide-gray-200'}`}>
                    {dashboardData.map(sku => (
-                     <tr key={sku.id} className="hover:bg-slate-800/30 transition-all group">
-                        <td className="py-10 pl-8 font-black"><div className="text-2xl text-white group-hover:text-indigo-400 transition-colors uppercase tracking-tight">{sku.name}</div><div className="text-[10px] text-slate-500 mt-2 font-bold tracking-widest uppercase">Global_ID: #00{sku.id}</div></td>
-                        <td className="py-10 text-center font-mono text-4xl font-black text-slate-200">{sku.currentStock?.toLocaleString()}</td>
+                     <tr key={sku.id} className={dashboardTheme === 'dark' ? 'hover:bg-slate-800/30 transition-all group' : 'hover:bg-gray-100 transition-all group'}>
+                        <td className={`py-10 pl-8 font-black ${dashboardTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                          <div className={`text-2xl transition-colors uppercase tracking-tight ${dashboardTheme === 'dark' ? 'text-white group-hover:text-indigo-400' : 'text-slate-900 group-hover:text-indigo-600'}`}>{sku.name}</div>
+                          <div className={`text-[10px] mt-2 font-bold tracking-widest uppercase ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-gray-600'}`}>Global_ID: #00{sku.id}</div>
+                        </td>
+                        <td className={`py-10 text-center font-mono text-4xl font-black ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-900'}`}>{sku.currentStock?.toLocaleString()}</td>
                         <td className="py-10 text-center">{sku.firstStockOut ? <div className="text-red-500 font-black text-2xl drop-shadow-lg animate-pulse">{sku.firstStockOut.date}</div> : <div className="text-emerald-500 font-black text-2xl uppercase tracking-tighter flex items-center justify-center gap-3"><Check size={28}/> Secure</div>}</td>
-                        <td className="py-10 px-6 bg-indigo-900/10 border-x border-indigo-900/20 shadow-inner">
+                        <td className={`py-10 px-6 shadow-inner border-x ${dashboardTheme === 'dark' ? 'bg-indigo-900/10 border-indigo-900/20' : 'bg-indigo-50 border-indigo-200'}`}>
                            {sku.firstStockOut ? (
-                             <div className={`p-6 rounded-[2.5rem] border-4 shadow-2xl ${sku.urgency === 'critical' ? 'bg-red-900/40 border-red-500 animate-pulse' : 'bg-indigo-900/40 border-indigo-500'}`}>
-                                <div className="text-[10px] font-black uppercase mb-2 opacity-80 text-center tracking-widest text-inherit leading-none">下单截止日</div>
-                                <div className="text-2xl font-black text-center mb-4 text-inherit">{sku.orderDateStr}</div>
-                                <div className="mt-2 pt-4 border-t border-white/10 flex justify-between items-center text-inherit"><span className="text-[10px] font-black opacity-60 uppercase tracking-tighter">建议补货量</span><span className="text-2xl font-mono font-black">{sku.suggestQty.toFixed(0)}</span></div>
+                             <div className={`p-6 rounded-[2.5rem] border-4 shadow-2xl ${sku.urgency === 'critical' ? 'bg-red-900/40 border-red-500 animate-pulse' : dashboardTheme === 'dark' ? 'bg-indigo-900/40 border-indigo-500 text-white' : 'bg-indigo-100 border-indigo-400 text-indigo-900'}`}>
+                                <div className="text-[10px] font-black uppercase mb-2 opacity-80 text-center tracking-widest leading-none">下单截止日</div>
+                                <div className="text-2xl font-black text-center mb-4">{sku.orderDateStr}</div>
+                                <div className={`mt-2 pt-4 flex justify-between items-center ${dashboardTheme === 'dark' ? 'border-t border-white/10' : 'border-t border-indigo-300'}`}><span className="text-[10px] font-black opacity-60 uppercase tracking-tighter">建议补货量</span><span className="text-2xl font-mono font-black">{sku.suggestQty.toFixed(0)}</span></div>
                              </div>
-                           ) : <div className="text-center text-slate-700 font-black text-[10px] uppercase tracking-[0.5em] py-10 italic">Strategic Stable</div>}
+                           ) : <div className={`text-center font-black text-[10px] uppercase tracking-[0.5em] py-10 italic ${dashboardTheme === 'dark' ? 'text-slate-700' : 'text-gray-600'}`}>Strategic Stable</div>}
                         </td>
                         {sku.forecast.monthEndStocks.slice(0, 12).map((m, i) => (
                            <td key={i} className="py-10 text-center">
-                              <div className={`w-16 h-12 mx-auto rounded-2xl flex items-center justify-center text-[11px] font-black shadow-2xl transition-all hover:scale-125 cursor-default ${m.stock <= 0 ? 'bg-red-600 text-white border-4 border-red-400 animate-pulse' : (m.status === 'low' ? 'bg-amber-500 text-white border-4 border-amber-300 shadow-amber-500/50' : 'bg-slate-800 text-slate-500 border border-slate-700 hover:bg-indigo-600 hover:text-white transition-colors')}`}>
+                              <div className={`w-16 h-12 mx-auto rounded-2xl flex items-center justify-center text-[11px] font-black shadow-2xl transition-all hover:scale-125 cursor-default ${m.stock <= 0 ? 'bg-red-600 text-white border-4 border-red-400 animate-pulse' : (m.status === 'low' ? 'bg-amber-500 text-white border-4 border-amber-300 shadow-amber-500/50' : dashboardTheme === 'dark' ? 'bg-slate-800 text-slate-500 border border-slate-700 hover:bg-indigo-600 hover:text-white transition-colors' : 'bg-gray-200 text-gray-600 border border-gray-300 hover:bg-indigo-500 hover:text-white transition-colors')}`}>
                                  {m.stock <= 0 ? '断' : (m.stock > 9999 ? '1w+' : m.stock.toFixed(0))}
                               </div>
                            </td>
