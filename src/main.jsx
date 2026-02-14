@@ -35,6 +35,15 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
+// 🔍 诊断：输出 Firebase 配置状态
+console.log('🔍 Firebase 配置诊断：');
+console.log('  apiKey:', firebaseConfig.apiKey ? '✅ 已配置' : '❌ 缺失');
+console.log('  authDomain:', firebaseConfig.authDomain ? '✅ 已配置' : '❌ 缺失');
+console.log('  projectId:', firebaseConfig.projectId ? '✅ 已配置' : '❌ 缺失');
+console.log('  storageBucket:', firebaseConfig.storageBucket ? '✅ 已配置' : '❌ 缺失');
+console.log('  messagingSenderId:', firebaseConfig.messagingSenderId ? '✅ 已配置' : '❌ 缺失');
+console.log('  appId:', firebaseConfig.appId ? '✅ 已配置' : '❌ 缺失');
+
 // 是否启用 Firebase（没配就走 localStorage）
 const missingFirebaseEnv = [];
 if (!firebaseConfig.apiKey) missingFirebaseEnv.push('VITE_FIREBASE_API_KEY');
@@ -45,19 +54,24 @@ if (!firebaseConfig.messagingSenderId) missingFirebaseEnv.push('VITE_FIREBASE_ME
 if (!firebaseConfig.appId) missingFirebaseEnv.push('VITE_FIREBASE_APP_ID');
 
 const hasFirebase = missingFirebaseEnv.length === 0;
+console.log('📦 Firebase 状态:', hasFirebase ? '✅ 准备初始化' : ('❌ 缺少配置项：' + missingFirebaseEnv.join(', ')));
+
 try {
   if (hasFirebase) {
+    console.log('🚀 正在初始化 Firebase...');
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
     auth = getAuth(app);
+    console.log('✅ Firebase Auth 初始化成功');
 
     // ✅ 关键增强：支持指定 Firestore 数据库 ID（多数据库场景）
     // - 绝大多数 Firebase 项目是默认库，无需配置
     // - 如果你在 GCP 控制台创建了非 (default) 的库，可通过 VITE_FIRESTORE_DB_ID 指定
     const firestoreDbId = (import.meta.env.VITE_FIRESTORE_DB_ID || '').trim();
     db = firestoreDbId ? getFirestore(app, firestoreDbId) : getFirestore(app);
+    console.log('✅ Firestore 初始化成功，数据库:', firestoreDbId || '(默认)');
   }
 } catch (e) {
-  console.warn('Firebase 初始化失败：', e);
+  console.error('❌ Firebase 初始化失败：', e.code, e.message);
   db = null;
   auth = null;
 }
