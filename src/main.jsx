@@ -1067,10 +1067,10 @@ const App = () => {
                              if (poFilter === 'completed') return po.status === 'shelved';
                              return true; // all
                            }).map(po => {
-                             // 计算预警：距离生产完成日期1.5个月（45天）内
+                             // 计算预警：仅在生产中状态，距离生产完成日期1.5个月（45天）内
                              const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays) * 86400000);
                              const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
-                             const isProductionWarning = po.status !== 'cancelled' && po.status !== 'pre_order' && po.status !== 'shelved' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
+                             const isProductionWarning = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
                              const isExpanded = expandedPoId === po.id;
                              
                              return (
