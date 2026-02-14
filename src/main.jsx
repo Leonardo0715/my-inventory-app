@@ -731,6 +731,7 @@ const App = () => {
   const dashboardData = useMemo(() => skus.map(sku => {
     const f = generateForecast(sku, 400);
     let orderDateStr = "安全";
+    let finalStockOutDate = "安全"; // 最终断货预测日期
     let urgency = 'normal', suggestQty = 0;
     let daysUntilStockout = 400; // 默认400天
     let monthsUntilStockout = (400 / 30).toFixed(1);
@@ -775,16 +776,19 @@ const App = () => {
       riskText = `${monthsUntilStockout}月 紧急`;
     }
     
-    // 订单决策计算
-    const firstStockOutData = f.data.find(d => d.stock <= 0);
-    if (firstStockOutData) {
-      const d = new Date(new Date(firstStockOutData.date).getTime() - warningDays * 86400000);
-      orderDateStr = d.toLocaleDateString();
-      if (d < new Date()) urgency = 'critical';
-      suggestQty = f.currentMonthRate * warningDays;
+    // 订单决策计算 - 基于最终断货日期（考虑补货恢复）
+    if (targetDayIndex < 400) {
+      const finalStockOutData = f.data[targetDayIndex];
+      if (finalStockOutData) {
+        finalStockOutDate = new Date(finalStockOutData.date).toLocaleDateString();
+        const d = new Date(new Date(finalStockOutData.date).getTime() - warningDays * 86400000);
+        orderDateStr = d.toLocaleDateString();
+        if (d < new Date()) urgency = 'critical';
+        suggestQty = f.currentMonthRate * warningDays;
+      }
     }
     
-    return { ...sku, forecast: f, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText };
+    return { ...sku, forecast: f, finalStockOutDate, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText };
   }), [skus, warningDays]);
 
   const coverageSummary = useMemo(() => {
@@ -809,8 +813,8 @@ const App = () => {
     let needOrderSoon = 0;
 
     dashboardData.forEach(sku => {
-      if (sku.firstStockOut) {
-        const stockoutDate = new Date(sku.firstStockOut.date);
+      if (sku.finalStockOutDate && sku.finalStockOutDate !== '安全') {
+        const stockoutDate = new Date(sku.finalStockOutDate);
         const diffStockout = (stockoutDate - today) / 86400000;
         if (diffStockout >= 0 && diffStockout <= horizonDays) {
           stockoutWithinHorizon += 1;
@@ -1563,9 +1567,9 @@ const App = () => {
                           <div className={`text-[10px] mt-2 font-bold tracking-widest uppercase ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-gray-600'}`}>Global_ID: #00{sku.id}</div>
                         </td>
                         <td className={`py-10 text-center font-mono text-4xl font-black ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-900'}`}>{sku.currentStock?.toLocaleString()}</td>
-                        <td className="py-10 text-center">{sku.firstStockOut ? <div className="text-red-500 font-black text-2xl drop-shadow-lg animate-pulse">{sku.firstStockOut.date}</div> : <div className="text-emerald-500 font-black text-2xl uppercase tracking-tighter flex items-center justify-center gap-3"><Check size={28}/> Secure</div>}</td>
+                        <td className="py-10 text-center">{sku.finalStockOutDate !== '安全' ? <div className="text-red-500 font-black text-2xl drop-shadow-lg animate-pulse">{sku.finalStockOutDate}</div> : <div className="text-emerald-500 font-black text-2xl uppercase tracking-tighter flex items-center justify-center gap-3"><Check size={28}/> Secure</div>}</td>
                         <td className={`py-10 px-6 shadow-inner border-x ${dashboardTheme === 'dark' ? 'bg-indigo-900/10 border-indigo-900/20' : 'bg-indigo-50 border-indigo-200'}`}>
-                           {sku.firstStockOut ? (
+                           {sku.finalStockOutDate !== '安全' ? (
                              <div className={`p-6 rounded-[2.5rem] border-4 shadow-2xl ${sku.urgency === 'critical' ? 'bg-red-900/40 border-red-500 animate-pulse' : dashboardTheme === 'dark' ? 'bg-indigo-900/40 border-indigo-500 text-white' : 'bg-indigo-100 border-indigo-400 text-indigo-900'}`}>
                                 <div className="text-[10px] font-black uppercase mb-2 opacity-80 text-center tracking-widest leading-none">下单截止日</div>
                                 <div className="text-2xl font-black text-center mb-4">{sku.orderDateStr}</div>
