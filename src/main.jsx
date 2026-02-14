@@ -733,13 +733,33 @@ const App = () => {
     const firstStockOut = f.data.find(d => d.stock <= 0);
     let orderDateStr = "安全";
     let urgency = 'normal', suggestQty = 0;
+    let daysUntilStockout = 400; // 默认400天
+    let monthsUntilStockout = (400 / 30).toFixed(1);
+    let riskLevel = 'safe'; // 'safe' (绿) / 'warning' (黄) / 'critical' (红)
+    let riskText = '12月+ 安全';
+    
     if (firstStockOut) {
+      daysUntilStockout = f.data.findIndex(d => d.stock <= 0);
+      monthsUntilStockout = (daysUntilStockout / 30).toFixed(1);
+      
+      // 根据断货月数判断风险等级
+      if (monthsUntilStockout >= 12) {
+        riskLevel = 'safe';
+        riskText = `${monthsUntilStockout}月 安全`;
+      } else if (monthsUntilStockout >= 6) {
+        riskLevel = 'warning';
+        riskText = `${monthsUntilStockout}月 预警`;
+      } else {
+        riskLevel = 'critical';
+        riskText = `${monthsUntilStockout}月 紧急`;
+      }
+      
       const d = new Date(new Date(firstStockOut.date).getTime() - warningDays * 86400000);
       orderDateStr = d.toLocaleDateString();
       if (d < new Date()) urgency = 'critical';
       suggestQty = f.currentMonthRate * warningDays;
     }
-    return { ...sku, forecast: f, firstStockOut, orderDateStr, urgency, suggestQty };
+    return { ...sku, forecast: f, firstStockOut, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText };
   }), [skus, warningDays]);
 
   const coverageSummary = useMemo(() => {
@@ -913,14 +933,16 @@ const App = () => {
                            <button onClick={(e) => { e.stopPropagation(); startRenaming(item); }} className="p-1 text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" title="编辑名称"><Edit2 size={12}/></button>
                            <button onClick={(e) => { e.stopPropagation(); duplicateSku(item.id); }} className="p-1 text-slate-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity" title="复制SKU"><Trash2 size={12} className="rotate-180"/></button>
                            <button onClick={(e) => { e.stopPropagation(); deleteSku(item.id); }} className="p-1 text-slate-300 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity" title="删除SKU"><Trash2 size={12}/></button>
-                           <span className={`h-2.5 w-2.5 rounded-full ${item.firstStockOut ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                           <span className={`h-2.5 w-2.5 rounded-full ${item.riskLevel === 'safe' ? 'bg-emerald-500' : item.riskLevel === 'warning' ? 'bg-yellow-500' : 'bg-red-500'}`} />
                         </div>
                       </>
                     )}
                   </div>
-                  <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                    <span>库存: {item.currentStock?.toLocaleString()}</span>
-                    <span className={item.firstStockOut ? 'text-red-500' : 'text-emerald-600'}>{item.firstStockOut ? '注意' : '稳健'}</span>
+                  <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-widest mb-1">
+                    <span className="text-slate-500">库存: {item.currentStock?.toLocaleString()}</span>
+                  </div>
+                  <div className={`px-2 py-1.5 rounded-lg text-[10px] font-black flex items-center gap-1 text-center ${item.riskLevel === 'safe' ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : item.riskLevel === 'warning' ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' : 'bg-red-100 text-red-700 border border-red-300'}`}>
+                    <span className="flex-1">{item.riskText}</span>
                   </div>
                 </div>
               ))}
