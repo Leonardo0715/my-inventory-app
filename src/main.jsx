@@ -154,6 +154,9 @@ const App = () => {
   // 核心锁：标记是否已完成从存储引擎的第一次读取，防止空覆盖
   const [isInitialLoadDone, setIsInitialLoadDone] = useState(false); 
   
+  // 编辑防护：记录当前正在编辑的字段，防止云端更新覆盖
+  const editingFieldRef = useRef(null); // { skuId, field, expiresAt }
+  
   const [showSeasonality, setShowSeasonality] = useState(false);
   const [renamingSkuId, setRenamingSkuId] = useState(null);
   const [tempName, setTempName] = useState('');
@@ -379,6 +382,15 @@ const App = () => {
       (docSnap) => {
         setSyncStatus('ready');
         console.log('✅ 云端数据订阅成功');
+        
+        // 检查是否有正在编辑的字段（编辑防护3秒窗口）
+        const now = Date.now();
+        if (editingFieldRef.current && editingFieldRef.current.expiresAt > now) {
+          console.log('⏸️ 用户正在编辑，暂不同步云端数据');
+          return;
+        }
+        editingFieldRef.current = null;
+        
         if (docSnap.exists()) {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
           lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
@@ -489,6 +501,12 @@ const App = () => {
   const activeSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || (skus[0]?.id))) || null, [skus, selectedSkuId]);
 
   const updateSku = (id, field, value) => {
+    // 编辑防护：3秒内防止云端覆盖
+    editingFieldRef.current = { 
+      skuId: id, 
+      field, 
+      expiresAt: Date.now() + 3000 
+    };
     setSkus(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
 
@@ -602,6 +620,13 @@ const App = () => {
     }));
   };
   const updatePO = (skuId, poId, field, value) => {
+    // 编辑防护：3秒内防止云端覆盖
+    editingFieldRef.current = { 
+      skuId, 
+      poId, 
+      field: `po.${field}`, 
+      expiresAt: Date.now() + 3000 
+    };
     setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => p.id === poId ? { ...p, [field]: value } : p) } : s));
   };
   const removePO = (skuId, poId) => {
@@ -1150,7 +1175,15 @@ const App = () => {
                              <input
                                type="number"
                                value={activeSku?.currentStock || 0}
-                               onChange={e => updateSku(activeSku.id, 'currentStock', clampNonNegativeInt(e.target.value, '当前库存'))}
+                               onChange={e => {
+                                 // 编辑防护：3秒内防止云端覆盖
+                                 editingFieldRef.current = { 
+                                   skuId: activeSku.id, 
+                                   field: 'currentStock', 
+                                   expiresAt: Date.now() + 3000 
+                                 };
+                                 updateSku(activeSku.id, 'currentStock', clampNonNegativeInt(e.target.value, '当前库存'));
+                               }}
                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-3xl p-6 font-mono text-3xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
                              />
                            </div>
@@ -1165,6 +1198,12 @@ const App = () => {
                                      type="number"
                                      value={v}
                                      onChange={e => {
+                                       // 标记正在编辑，3秒内防止云端覆盖
+                                       editingFieldRef.current = { 
+                                         skuId: activeSku.id, 
+                                         field: 'monthlySales', 
+                                         expiresAt: Date.now() + 3000 
+                                       };
                                        const n = [...(activeSku.monthlySales || Array(12).fill(0))];
                                        n[i] = clampNonNegativeInt(e.target.value, '月度销量');
                                        updateSku(activeSku.id, 'monthlySales', n);
