@@ -290,7 +290,11 @@ const App = () => {
 
   // --- 3.1 Firestore 订阅（当 user 认证成功后执行） ---
   useEffect(() => {
-    if (!db) return;
+    console.log('🔔 Firestore 订阅 effect 触发，db=', !!db, 'user=', user?.uid || null);
+    if (!db) {
+      console.log('⚠️ db 不存在，退出');
+      return;
+    }
     if (!user) {
       console.log('⏳ 等待用户认证...');
       return;
