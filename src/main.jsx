@@ -1082,42 +1082,27 @@ const App = () => {
               
               {/* PO状态指示器 - 两列布局 */}
               <div className="space-y-0.5">
-                <div className="text-[7px] font-bold text-slate-500 uppercase">PO到货：</div>
+                <div className="text-[7px] font-bold text-slate-500 uppercase">PO阶段：</div>
                 <div className="grid grid-cols-2 gap-1">
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                    <span className="text-[7px] text-slate-600">待生产</span>
+                    <span className="text-[7px] text-slate-600">已下单</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
-                    <span className="text-[7px] text-slate-600">海运中</span>
+                    <span className="text-[7px] text-slate-600">生产中</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                    <span className="text-[7px] text-slate-600">铁路中</span>
+                    <span className="text-[7px] text-slate-600">运输中</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-lime-500" />
-                    <span className="text-[7px] text-slate-600">陆运中</span>
+                    <span className="text-[7px] text-slate-600">清关中</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    <span className="text-[7px] text-slate-600">已到达</span>
-                  </div>
-                </div>
-              </div>
-              
-              {/* 库存状态指示器 */}
-              <div className="space-y-0.5 pt-0.5 border-t border-slate-200">
-                <div className="text-[7px] font-bold text-slate-500 uppercase">货态：</div>
-                <div className="flex gap-3">
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-sm bg-emerald-500" />
-                    <span className="text-[7px] text-slate-600">有货</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-sm bg-slate-200" />
-                    <span className="text-[7px] text-slate-600">缺货</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-600" />
+                    <span className="text-[7px] text-slate-600">已上架</span>
                   </div>
                 </div>
               </div>
@@ -1169,20 +1154,36 @@ const App = () => {
                       {item.monthlyPOs?.map((pos, idx) => {
                         // 获取该月份的PO信息
                         const poColorMap = {
-                          'pending': 'bg-blue-500',
-                          'leg1_shipped': 'bg-yellow-500',
-                          'leg2_shipped': 'bg-orange-500',
-                          'leg3_shipped': 'bg-lime-500',
-                          'arrived': 'bg-emerald-500',
+                          'pre_order': 'bg-slate-400',
+                          'ordered': 'bg-blue-500',
+                          'in_production': 'bg-blue-600',
+                          'prod_complete': 'bg-yellow-500',
+                          'leg1_shipped': 'bg-yellow-600',
+                          'leg1_arrived': 'bg-orange-500',
+                          'leg2_shipped': 'bg-orange-600',
+                          'leg2_arrived': 'bg-lime-500',
+                          'inspecting': 'bg-lime-600',
+                          'picking': 'bg-emerald-400',
+                          'bonded_warehouse': 'bg-emerald-500',
+                          'pending_shelving': 'bg-emerald-600',
+                          'shelved': 'bg-green-700',
                           'cancelled': 'bg-red-500'
                         };
                         
                         const poStatusLabel = {
-                          'pending': '待生产',
-                          'leg1_shipped': '海运中',
-                          'leg2_shipped': '铁路中',
-                          'leg3_shipped': '陆运中',
-                          'arrived': '已到达',
+                          'pre_order': '预下订单',
+                          'ordered': '已下单',
+                          'in_production': '生产中',
+                          'prod_complete': '生产完成',
+                          'leg1_shipped': '头程发货',
+                          'leg1_arrived': '头程到货',
+                          'leg2_shipped': '二程发货',
+                          'leg2_arrived': '二程到货',
+                          'inspecting': '查验中',
+                          'picking': '提货中',
+                          'bonded_warehouse': '到达保税仓',
+                          'pending_shelving': '待理货上架',
+                          'shelved': '已理货上架',
                           'cancelled': '已取消'
                         };
                         
