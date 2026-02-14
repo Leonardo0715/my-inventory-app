@@ -875,7 +875,19 @@ const App = () => {
       }
     }
     
-    return { ...sku, forecast: f, finalStockOutDate, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText };
+    // 计算每个月的有货状态（12个月）
+    const monthlyAvailability = Array(12).fill(false);
+    const today = new Date();
+    f.data.forEach(dataPoint => {
+      const date = new Date(dataPoint.date);
+      // 如果库存>0，标记该月份为有货
+      if (dataPoint.stock > 0) {
+        const monthIdx = date.getMonth();
+        monthlyAvailability[monthIdx] = true;
+      }
+    });
+    
+    return { ...sku, forecast: f, finalStockOutDate, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText, monthlyAvailability };
   }), [skus, warningDays]);
 
   const coverageSummary = useMemo(() => {
@@ -1068,6 +1080,23 @@ const App = () => {
                   </div>
                   <div className={`px-2 py-1.5 rounded-lg text-[10px] font-black flex items-center gap-1 text-center ${item.riskLevel === 'safe' ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : item.riskLevel === 'warning' ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' : 'bg-red-100 text-red-700 border border-red-300'}`}>
                     <span className="flex-1">{item.riskText}</span>
+                  </div>
+                  
+                  {/* 全年有货月份栏 */}
+                  <div className="mt-2 space-y-1">
+                    <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">全年货态</div>
+                    <div className="flex gap-0.5">
+                      {item.monthlyAvailability?.map((hasStock, idx) => {
+                        const months = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex-1 h-2 rounded-sm transition-all ${hasStock ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                            title={`${months[idx]}: ${hasStock ? '有货' : '缺货'}`}
+                          />
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               ))}
