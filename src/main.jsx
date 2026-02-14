@@ -343,6 +343,10 @@ const App = () => {
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
       if (local.viewMode === 'detail' || local.viewMode === 'list') setViewMode(local.viewMode);
+      // 加载本地设置
+      if (local.warningDays) setWarningDays(local.warningDays);
+      if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
+      if (local.transportModes) setTransportModes(local.transportModes);
       setStatus('ready');
       console.log('✅ 从本地恢复成功');
     } else {
@@ -385,6 +389,10 @@ const App = () => {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
           lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
           setSkus(remoteData);
+          // 加载云端设置
+          if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
+          if (docSnap.data().defaultSettings) setDefaultSettings(docSnap.data().defaultSettings);
+          if (docSnap.data().transportModes) setTransportModes(docSnap.data().transportModes);
           if (remoteData.length > 0) {
             setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
           }
@@ -398,7 +406,7 @@ const App = () => {
           setSkus(bootstrap);
           setSelectedSkuId(bootstrap[0]?.id ?? 1);
           // 主动写入，确保云端 doc 被创建
-          setDoc(docRef, { items: bootstrap, lastUpdated: new Date().toISOString() }, { merge: true })
+          setDoc(docRef, { items: bootstrap, warningDays, defaultSettings, transportModes, lastUpdated: new Date().toISOString() }, { merge: true })
             .then(() => { 
               lastRemoteItemsJSONRef.current = JSON.stringify(bootstrap);
               console.log('✅ 云端初始化成功');
@@ -430,10 +438,10 @@ const App = () => {
   useEffect(() => {
     if (skus.length === 0) return;
     const timer = setTimeout(() => {
-      saveLocalMemory(localKey, { skus, selectedSkuId, viewMode, savedAt: Date.now() });
+      saveLocalMemory(localKey, { skus, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, savedAt: Date.now() });
     }, 300);
     return () => clearTimeout(timer);
-  }, [skus, selectedSkuId, viewMode, localKey]);
+  }, [skus, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, localKey]);
 
   // --- 4.2 云端自动存档（多人共享） ---
   useEffect(() => {
@@ -460,6 +468,28 @@ const App = () => {
 
     return () => clearTimeout(remoteTimer);
   }, [skus, user, isInitialLoadDone, appId, db]);
+
+  // --- 4.3 设置自动云端保存 ---
+  useEffect(() => {
+    if (!db || !user || !isInitialLoadDone) return;
+    
+    const settingsTimer = setTimeout(async () => {
+      try {
+        const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
+        await setDoc(docRef, { 
+          warningDays, 
+          defaultSettings, 
+          transportModes,
+          lastUpdated: new Date().toISOString() 
+        }, { merge: true });
+        console.log('✅ 设置自动同步到云端');
+      } catch (err) {
+        console.error('⚠️ 设置云端同步失败:', err.message);
+      }
+    }, 1500);
+
+    return () => clearTimeout(settingsTimer);
+  }, [warningDays, defaultSettings, transportModes, user, isInitialLoadDone, appId, db]);
 
   // --- 5. 业务操作 ---
   const activeSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || (skus[0]?.id))) || null, [skus, selectedSkuId]);
@@ -1808,7 +1838,45 @@ const App = () => {
               {/* 关闭按钮 */}
               <div className="flex gap-3 pt-6 border-t border-slate-200">
                 <button
-                  onClick={() => setShowSettings(false)}
+                  onClick={() => {
+                    // 保存设置到本地存储
+                    const localData = loadLocalMemory(localKey) || {};
+                    saveLocalMemory(localKey, {
+                      ...localData,
+                      warningDays,
+                      defaultSettings,
+                      transportModes
+                    });
+                    
+                    // 保存设置到 Firestore
+                    if (db && user) {
+                      try {
+                        const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
+                        setDoc(docRef, { 
+                          warningDays, 
+                          defaultSettings, 
+                          transportModes,
+                          lastUpdated: new Date().toISOString() 
+                        }, { merge: true })
+                          .then(() => {
+                            console.log('✅ 设置已保存到云端');
+                            setWarning('✅ 设置已保存成功！');
+                            setTimeout(() => setWarning(''), 2000);
+                          })
+                          .catch(err => {
+                            console.error('❌ 保存设置失败:', err.message);
+                            setWarning('⚠️ 设置已保存到本地（云端保存失败）');
+                            setTimeout(() => setWarning(''), 3000);
+                          });
+                      } catch (err) {
+                        console.error('❌ 保存设置异常:', err);
+                        setWarning('⚠️ 设置已保存到本地（出现异常）');
+                        setTimeout(() => setWarning(''), 3000);
+                      }
+                    }
+                    
+                    setShowSettings(false);
+                  }}
                   className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-black hover:bg-indigo-700 transition-colors text-sm uppercase tracking-wider"
                 >
                   确认保存
