@@ -875,17 +875,26 @@ const App = () => {
       }
     }
     
-    // 计算每个月的有货状态（12个月）
+    // 计算每个月的有货状态（从当前日期往后推12个月）
     const monthlyAvailability = Array(12).fill(false);
     const today = new Date();
-    f.data.forEach(dataPoint => {
-      const date = new Date(dataPoint.date);
-      // 如果库存>0，标记该月份为有货
-      if (dataPoint.stock > 0) {
-        const monthIdx = date.getMonth();
-        monthlyAvailability[monthIdx] = true;
-      }
-    });
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth();
+    
+    // 对于接下来的12个月，检查是否有货
+    for (let i = 0; i < 12; i++) {
+      let targetDate = new Date(currentYear, currentMonth + i, 1);
+      const monthYear = targetDate.getFullYear();
+      const monthIdx = targetDate.getMonth();
+      
+      // 生成该月的起始和结束日期
+      const monthStart = new Date(monthYear, monthIdx, 1).toISOString().split('T')[0];
+      const monthEnd = new Date(monthYear, monthIdx + 1, 0).toISOString().split('T')[0];
+      
+      // 检查这个月内是否有任何一天库存>0
+      const hasStockInMonth = f.data.some(d => d.date >= monthStart && d.date <= monthEnd && d.stock > 0);
+      monthlyAvailability[i] = hasStockInMonth;
+    }
     
     return { ...sku, forecast: f, finalStockOutDate, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText, monthlyAvailability };
   }), [skus, warningDays]);
@@ -1084,15 +1093,19 @@ const App = () => {
                   
                   {/* 全年有货月份栏 */}
                   <div className="mt-2 space-y-1">
-                    <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">全年货态</div>
+                    <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">12个月货态</div>
                     <div className="flex gap-0.5">
                       {item.monthlyAvailability?.map((hasStock, idx) => {
+                        // 根据当前日期计算实际月份
                         const months = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+                        const today = new Date();
+                        const targetMonth = (today.getMonth() + idx) % 12;
+                        const monthLabel = months[targetMonth];
                         return (
                           <div
                             key={idx}
                             className={`flex-1 h-2 rounded-sm transition-all ${hasStock ? 'bg-emerald-500' : 'bg-slate-200'}`}
-                            title={`${months[idx]}: ${hasStock ? '有货' : '缺货'}`}
+                            title={`${monthLabel}: ${hasStock ? '有货' : '缺货'}`}
                           />
                         );
                       })}
