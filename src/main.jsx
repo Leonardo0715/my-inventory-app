@@ -1077,51 +1077,47 @@ const App = () => {
             </div>
             
             {/* 图例说明 */}
-            <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 space-y-2">
-              <div className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-2">图例说明</div>
+            <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 space-y-1.5">
+              <div className="text-[8px] font-black text-slate-600 uppercase tracking-widest">图例</div>
               
-              {/* PO状态指示器 */}
-              <div className="space-y-1">
-                <div className="text-[8px] font-bold text-slate-500 uppercase">PO到货状态：</div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-blue-500" />
-                    <span className="text-[8px] text-slate-600">待生产</span>
+              {/* PO状态指示器 - 两列布局 */}
+              <div className="space-y-0.5">
+                <div className="text-[7px] font-bold text-slate-500 uppercase">PO到货：</div>
+                <div className="grid grid-cols-2 gap-1">
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                    <span className="text-[7px] text-slate-600">待生产</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-yellow-500" />
-                    <span className="text-[8px] text-slate-600">海运中</span>
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+                    <span className="text-[7px] text-slate-600">海运中</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-orange-500" />
-                    <span className="text-[8px] text-slate-600">铁路中</span>
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                    <span className="text-[7px] text-slate-600">铁路中</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-lime-500" />
-                    <span className="text-[8px] text-slate-600">陆运中</span>
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-lime-500" />
+                    <span className="text-[7px] text-slate-600">陆运中</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <span className="text-[8px] text-slate-600">已到达</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-slate-300" />
-                    <span className="text-[8px] text-slate-600">无PO到货</span>
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <span className="text-[7px] text-slate-600">已到达</span>
                   </div>
                 </div>
               </div>
               
               {/* 库存状态指示器 */}
-              <div className="space-y-1 pt-1 border-t border-slate-200">
-                <div className="text-[8px] font-bold text-slate-500 uppercase">库存货态：</div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-sm bg-emerald-500" />
-                    <span className="text-[8px] text-slate-600">该月有货</span>
+              <div className="space-y-0.5 pt-0.5 border-t border-slate-200">
+                <div className="text-[7px] font-bold text-slate-500 uppercase">货态：</div>
+                <div className="flex gap-3">
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-sm bg-emerald-500" />
+                    <span className="text-[7px] text-slate-600">有货</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-sm bg-slate-200" />
-                    <span className="text-[8px] text-slate-600">该月缺货</span>
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-sm bg-slate-200" />
+                    <span className="text-[7px] text-slate-600">缺货</span>
                   </div>
                 </div>
               </div>
