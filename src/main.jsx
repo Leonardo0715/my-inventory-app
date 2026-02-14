@@ -154,8 +154,8 @@ const App = () => {
   // 核心锁：标记是否已完成从存储引擎的第一次读取，防止空覆盖
   const [isInitialLoadDone, setIsInitialLoadDone] = useState(false); 
   
-  // 编辑防护：记录当前正在编辑的字段，防止云端更新覆盖
-  const editingFieldRef = useRef(null); // { skuId, field, expiresAt }
+  // 编辑防护：用户正在编辑任何字段时，暂停所有云端同步
+  const isEditingRef = useRef(false);
   
   const [showSeasonality, setShowSeasonality] = useState(false);
   const [renamingSkuId, setRenamingSkuId] = useState(null);
@@ -383,13 +383,11 @@ const App = () => {
         setSyncStatus('ready');
         console.log('✅ 云端数据订阅成功');
         
-        // 检查是否有正在编辑的字段（编辑防护3秒窗口）
-        const now = Date.now();
-        if (editingFieldRef.current && editingFieldRef.current.expiresAt > now) {
+        // 编辑防护：用户正在编辑时，暂停所有云端同步
+        if (isEditingRef.current) {
           console.log('⏸️ 用户正在编辑，暂不同步云端数据');
           return;
         }
-        editingFieldRef.current = null;
         
         if (docSnap.exists()) {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
@@ -501,12 +499,6 @@ const App = () => {
   const activeSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || (skus[0]?.id))) || null, [skus, selectedSkuId]);
 
   const updateSku = (id, field, value) => {
-    // 编辑防护：3秒内防止云端覆盖
-    editingFieldRef.current = { 
-      skuId: id, 
-      field, 
-      expiresAt: Date.now() + 3000 
-    };
     setSkus(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
 
@@ -620,13 +612,6 @@ const App = () => {
     }));
   };
   const updatePO = (skuId, poId, field, value) => {
-    // 编辑防护：3秒内防止云端覆盖
-    editingFieldRef.current = { 
-      skuId, 
-      poId, 
-      field: `po.${field}`, 
-      expiresAt: Date.now() + 3000 
-    };
     setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => p.id === poId ? { ...p, [field]: value } : p) } : s));
   };
   const removePO = (skuId, poId) => {
@@ -1175,13 +1160,9 @@ const App = () => {
                              <input
                                type="number"
                                value={activeSku?.currentStock || 0}
+                               onFocus={() => isEditingRef.current = true}
+                               onBlur={() => isEditingRef.current = false}
                                onChange={e => {
-                                 // 编辑防护：3秒内防止云端覆盖
-                                 editingFieldRef.current = { 
-                                   skuId: activeSku.id, 
-                                   field: 'currentStock', 
-                                   expiresAt: Date.now() + 3000 
-                                 };
                                  updateSku(activeSku.id, 'currentStock', clampNonNegativeInt(e.target.value, '当前库存'));
                                }}
                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-3xl p-6 font-mono text-3xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
@@ -1197,13 +1178,9 @@ const App = () => {
                                    <input
                                      type="number"
                                      value={v}
+                                     onFocus={() => isEditingRef.current = true}
+                                     onBlur={() => isEditingRef.current = false}
                                      onChange={e => {
-                                       // 标记正在编辑，3秒内防止云端覆盖
-                                       editingFieldRef.current = { 
-                                         skuId: activeSku.id, 
-                                         field: 'monthlySales', 
-                                         expiresAt: Date.now() + 3000 
-                                       };
                                        const n = [...(activeSku.monthlySales || Array(12).fill(0))];
                                        n[i] = clampNonNegativeInt(e.target.value, '月度销量');
                                        updateSku(activeSku.id, 'monthlySales', n);
@@ -1315,18 +1292,22 @@ const App = () => {
                                           <input 
                                             type="text" 
                                             value={po.poNumber} 
+                                            onFocus={() => isEditingRef.current = true}
+                                            onBlur={() => isEditingRef.current = false}
                                             onChange={e => updatePO(activeSku.id, po.id, 'poNumber', e.target.value)} 
                                             className="text-sm font-black text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2.5 w-full outline-none border border-indigo-200 focus:border-indigo-400 transition-colors mb-3 mt-2" 
                                           />
                                           <div className="grid grid-cols-2 gap-3 mb-3 font-bold uppercase text-xs">
                                             <div>
                                               <label className="text-[9px] font-black text-slate-400 block mb-1">下单日期</label>
-                                              <input type="date" value={po.orderDate} onChange={e => updatePO(activeSku.id, po.id, 'orderDate', e.target.value)} className="text-sm text-slate-600 bg-transparent outline-none w-full" />
+                                              <input type="date" value={po.orderDate} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'orderDate', e.target.value)} className="text-sm text-slate-600 bg-transparent outline-none w-full" />
                                             </div>
                                             <div>
                                               <label className="text-[9px] font-black text-slate-400 block mb-1">采购状态</label>
                                               <select 
                                                 value={po.status || 'ordered'} 
+                                                onFocus={() => isEditingRef.current = true}
+                                                onBlur={() => isEditingRef.current = false}
                                                 onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)}
                                                 className="text-xs font-black bg-slate-100 rounded px-2 py-1 border border-slate-300 focus:outline-none focus:border-indigo-500 w-full"
                                               >
@@ -1354,6 +1335,8 @@ const App = () => {
                                               <input
                                                 type="number"
                                                 value={po.qty}
+                                                onFocus={() => isEditingRef.current = true}
+                                                onBlur={() => isEditingRef.current = false}
                                                 onChange={e => updatePO(activeSku.id, po.id, 'qty', clampNonNegativeInt(e.target.value, '采购数量'))}
                                                 className="text-indigo-600 font-black bg-transparent w-full text-right outline-none font-mono text-xs"
                                               />
@@ -1366,6 +1349,8 @@ const App = () => {
                                                   <input
                                                     type="number"
                                                     value={po.prodDays}
+                                                    onFocus={() => isEditingRef.current = true}
+                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
                                                     className="w-12 text-right bg-transparent border-b border-slate-200 text-xs"
                                                   />天
@@ -1373,12 +1358,14 @@ const App = () => {
                                              </div>
                                              <div className="flex justify-between items-center text-blue-600 text-[9px]">
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>头程
+                                                  <select value={po.leg1Mode} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>头程
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
                                                     value={po.leg1Days}
+                                                    onFocus={() => isEditingRef.current = true}
+                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
                                                     className="w-12 text-right bg-transparent border-b border-blue-100 text-xs"
                                                   />天
@@ -1386,12 +1373,14 @@ const App = () => {
                                              </div>
                                              <div className="flex justify-between items-center text-orange-600 text-[9px]">
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>二程
+                                                  <select value={po.leg2Mode} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>二程
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
                                                     value={po.leg2Days}
+                                                    onFocus={() => isEditingRef.current = true}
+                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
                                                     className="w-12 text-right bg-transparent border-b border-orange-100 text-xs"
                                                   />天
@@ -1399,12 +1388,14 @@ const App = () => {
                                              </div>
                                              <div className="flex justify-between items-center text-emerald-600 text-[9px]">
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>三程
+                                                  <select value={po.leg3Mode} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>三程
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
                                                     value={po.leg3Days}
+                                                    onFocus={() => isEditingRef.current = true}
+                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg3Days', clampNonNegativeInt(e.target.value, '三程时效'))}
                                                     className="w-12 text-right bg-transparent border-b border-emerald-100 text-xs"
                                                   />天
