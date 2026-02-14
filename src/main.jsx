@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { 
   TrendingDown, Clock, Plus, AlertTriangle, BarChart3, 
   Check, X, Layout, List, RefreshCw, Save, Edit2,
-  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock
+  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, WifiOff
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -81,7 +81,7 @@ try {
 }
 
 const DEFAULT_DATA = [
-  { id: 1, name: '旗舰商品 A (北美线)', currentStock: 1200, monthlySales: Array(12).fill(600), pos: [{ id: 101, poNumber: 'PO-20260214-001', orderDate: new Date().toISOString().split('T')[0], qty: 2500, prodDays: 30, leg1Mode: 'sea', leg1Days: 35, leg2Mode: 'rail', leg2Days: 15 }] },
+  { id: 1, name: '旗舰商品 A (北美线)', currentStock: 1200, monthlySales: Array(12).fill(600), pos: [{ id: 101, poNumber: 'PO-20260214-001', orderDate: new Date().toISOString().split('T')[0], qty: 2500, prodDays: 30, leg1Mode: 'sea', leg1Days: 35, leg2Mode: 'rail', leg2Days: 15, leg3Mode: 'sea', leg3Days: 10 }] },
   { id: 2, name: '高周转新品 B (东南亚)', currentStock: 4000, monthlySales: Array(12).fill(800), pos: [] }
 ];
 
@@ -106,6 +106,8 @@ function sanitizeSkus(items) {
         leg1Days: Number(po.leg1Days ?? 0),
         leg2Mode: ['sea', 'air', 'rail'].includes(po.leg2Mode) ? po.leg2Mode : 'sea',
         leg2Days: Number(po.leg2Days ?? 0),
+        leg3Mode: ['sea', 'air', 'rail'].includes(po.leg3Mode) ? po.leg3Mode : 'sea',
+        leg3Days: Number(po.leg3Days ?? 0),
         status: ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].includes(po.status) ? po.status : 'ordered',
       }));
       return { id, name, currentStock, monthlySales, pos };
@@ -190,6 +192,7 @@ const App = () => {
     defaultProdDays: 30,
     defaultLeg1Days: 30,
     defaultLeg2Days: 15,
+    defaultLeg3Days: 0,
     defaultQty: 1000
   });
 
@@ -333,8 +336,16 @@ const App = () => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
 
-    console.log('📦 开始本地数据初始化...');
+    console.log('📦 初始化...');
 
+    // 云端优先：如果有 Firebase，等待 Firestore 订阅
+    if (db && user) {
+      console.log('☁️ Firebase 已配置，等待 Firestore 订阅数据...');
+      // 不做本地初始化，直接等待 Firestore 来
+      return;
+    }
+
+    // 没有 Firebase，使用降级方案（本地数据）
     const local = loadLocalMemory(localKey);
     if (local && Array.isArray(local.skus)) {
       const localSkus = sanitizeSkus(local.skus);
@@ -342,28 +353,11 @@ const App = () => {
         setSkus(localSkus);
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-      if (local.viewMode === 'detail' || local.viewMode === 'list') setViewMode(local.viewMode);
-      // 加载本地设置
-      if (local.warningDays) setWarningDays(local.warningDays);
-      if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
-      if (local.transportModes) setTransportModes(local.transportModes);
-      setStatus('ready');
-      console.log('✅ 从本地恢复成功');
-    } else {
-      const initialData = sanitizeSkus(DEFAULT_DATA);
-      setSkus(initialData);
-      setSelectedSkuId(initialData[0]?.id ?? 1);
-      setViewMode('detail');
-      if (status !== 'unauthenticated') setStatus('authenticated');
-      console.log('✅ 使用默认数据');
+      console.log('✅ 从本地恢复（离线模式）');
     }
-
-    if (!db) {
-      console.log('⚠️ Firebase 未初始化，仅使用本地数据');
-      setSyncStatus('offline');
-      setIsInitialLoadDone(true);
-    }
-  }, [localKey, status]);
+    setSyncStatus('offline');
+    setIsInitialLoadDone(true);
+  }, [localKey, db, user]);
 
   // --- 3.1 Firestore 订阅（当 user 认证成功后执行） ---
   useEffect(() => {
@@ -432,7 +426,7 @@ const App = () => {
     );
 
     return () => unsubscribe();
-  }, [user, db, appId, localKey]);
+  }, [user, db, appId]);
 
   // --- 4.1 本地兜底自动存档（始终开启） ---
   useEffect(() => {
@@ -601,7 +595,7 @@ const App = () => {
     setSkus(prev => prev.map(s => {
       if (s.id === skuId) {
         const poNumber = generatePONumber(skuId);
-        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: defaultSettings.defaultQty, prodDays: defaultSettings.defaultProdDays, leg1Mode: 'sea', leg1Days: defaultSettings.defaultLeg1Days, leg2Mode: 'sea', leg2Days: defaultSettings.defaultLeg2Days, status: 'ordered' };
+        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: defaultSettings.defaultQty, prodDays: defaultSettings.defaultProdDays, leg1Mode: 'sea', leg1Days: defaultSettings.defaultLeg1Days, leg2Mode: 'sea', leg2Days: defaultSettings.defaultLeg2Days, leg3Mode: 'sea', leg3Days: defaultSettings.defaultLeg3Days, status: 'ordered' };
         return { ...s, pos: [...(s.pos || []), newPO] };
       }
       return s;
@@ -610,7 +604,9 @@ const App = () => {
   const updatePO = (skuId, poId, field, value) => {
     setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => p.id === poId ? { ...p, [field]: value } : p) } : s));
   };
-  const removePO = (skuId, poId) => setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).filter(p => p.id !== poId) } : s));
+  const removePO = (skuId, poId) => {
+    setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).filter(p => p.id !== poId) } : s));
+  };
   
   const duplicatePO = (skuId, poId) => {
     const sku = skus.find(s => s.id === skuId);
@@ -743,6 +739,7 @@ const App = () => {
             setWarning('CSV 文件未解析到有效数据');
             return;
           }
+          hasLocalChangesRef.current = true;
           setSkus(prev => prev.map(s => s.id === activeSku.id ? { ...s, pos: [...(s.pos || []), ...imported] } : s));
         } catch (err) {
           setWarning('CSV 文件解析失败：' + err.message);
@@ -985,6 +982,43 @@ const App = () => {
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm overflow-hidden">
+      {/* 离线弹窗 */}
+      {syncStatus === 'error' && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[999] flex items-center justify-center">
+          <div className="bg-red-50 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 border-2 border-red-200 animate-in zoom-in-50">
+            <div className="flex justify-center mb-4">
+              <div className="h-16 w-16 bg-red-500 rounded-full flex items-center justify-center">
+                <WifiOff size={32} className="text-white" />
+              </div>
+            </div>
+            <h2 className="text-2xl font-black text-red-900 text-center mb-2">⚠️ 云端连接失败</h2>
+            <p className="text-center text-red-700 text-sm font-semibold mb-2">
+              无法连接到 Firestore 云数据库
+            </p>
+            <p className="text-center text-red-600 text-xs mb-6 leading-relaxed">
+              系统为保护数据一致性，已禁用所有操作。请检查网络连接或云端设置。
+            </p>
+            <div className="bg-red-100 rounded-lg p-4 mb-6 text-xs text-red-800">
+              <p className="font-bold mb-1">可尝试的操作：</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>刷新页面重新连接</li>
+                <li>检查网络连接</li>
+                <li>验证 Firebase 配置</li>
+              </ul>
+            </div>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-red-600 text-white py-2 rounded-lg font-bold hover:bg-red-700 transition-colors"
+            >
+              🔄 刷新页面
+            </button>
+          </div>
+        </div>
+      )}
+      {/* 禁用操作遮罩 */}
+      {syncStatus === 'error' && (
+        <div className="absolute inset-0 pointer-events-auto" style={{pointerEvents: syncStatus === 'error' ? 'auto' : 'none'}} />
+      )}
       {warning && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-100 border border-amber-300 text-amber-800 px-6 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 animate-in slide-in-from-top-2">
           <AlertCircle size={14} className="text-amber-500" />
@@ -1131,7 +1165,7 @@ const App = () => {
                                      type="number"
                                      value={v}
                                      onChange={e => {
-                                       const n = [...activeSku.monthlySales];
+                                       const n = [...(activeSku.monthlySales || Array(12).fill(0))];
                                        n[i] = clampNonNegativeInt(e.target.value, '月度销量');
                                        updateSku(activeSku.id, 'monthlySales', n);
                                      }}
@@ -1324,10 +1358,23 @@ const App = () => {
                                                   />天
                                                 </div>
                                              </div>
+                                             <div className="flex justify-between items-center text-emerald-600 text-[9px]">
+                                                <span className="flex items-center gap-1">
+                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>三程
+                                                </span>
+                                                <div className="flex items-center gap-1">
+                                                  <input
+                                                    type="number"
+                                                    value={po.leg3Days}
+                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg3Days', clampNonNegativeInt(e.target.value, '三程时效'))}
+                                                    className="w-12 text-right bg-transparent border-b border-emerald-100 text-xs"
+                                                  />天
+                                                </div>
+                                             </div>
                                           </div>
                                           <div className="mt-2 flex items-center justify-between text-[9px]">
                                             <div className="font-black text-indigo-500 italic">
-                                              预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)) * 86400000).toLocaleDateString()}
+                                              预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)+Number(po.leg3Days)) * 86400000).toLocaleDateString()}
                                             </div>
                                             <div className="flex items-center gap-1">
                                               <button 
@@ -1820,6 +1867,15 @@ const App = () => {
                       type="number"
                       value={defaultSettings.defaultLeg2Days}
                       onChange={e => setDefaultSettings({...defaultSettings, defaultLeg2Days: Number(e.target.value)})}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-2">三程时效（天）</label>
+                    <input
+                      type="number"
+                      value={defaultSettings.defaultLeg3Days}
+                      onChange={e => setDefaultSettings({...defaultSettings, defaultLeg3Days: Number(e.target.value)})}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium"
                     />
                   </div>
