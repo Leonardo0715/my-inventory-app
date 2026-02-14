@@ -255,12 +255,13 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // --- 3. 数据记忆读取（云端共享优先 + 本地兜底） ---
+  // --- 3.0 本地数据初始化（仅一次） ---
   useEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
 
-    // 3.0 先从本地恢复（即便云端异常也不会刷新丢失）
+    console.log('📦 开始本地数据初始化...');
+
     const local = loadLocalMemory(localKey);
     if (local && Array.isArray(local.skus)) {
       const localSkus = sanitizeSkus(local.skus);
@@ -270,30 +271,34 @@ const App = () => {
       }
       if (local.viewMode === 'detail' || local.viewMode === 'list') setViewMode(local.viewMode);
       setStatus('ready');
+      console.log('✅ 从本地恢复成功');
     } else {
       const initialData = sanitizeSkus(DEFAULT_DATA);
       setSkus(initialData);
       setSelectedSkuId(initialData[0]?.id ?? 1);
       setViewMode('detail');
       setStatus('ready');
+      console.log('✅ 使用默认数据');
     }
 
-    // 3.1 未配置 Firebase：只用本地
     if (!db) {
+      console.log('⚠️ Firebase 未初始化，仅使用本地数据');
       setSyncStatus('offline');
       setIsInitialLoadDone(true);
-      return;
     }
+  }, [localKey]);
 
-    // 3.2 云端记忆模式：等待匿名登录后订阅 Firestore
+  // --- 3.1 Firestore 订阅（当 user 认证成功后执行） ---
+  useEffect(() => {
+    if (!db) return;
     if (!user) {
-      console.log('⏳ 等待用户认证(user 为空)...');
+      console.log('⏳ 等待用户认证...');
       return;
     }
 
     console.log('🔄 user 已认证，开始 Firestore 订阅，uid:', user.uid);
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
-    console.log('📍 订阅路径:', 'inventory_apps/' + appId + '/shared/main');
+    console.log('📍 Firestore 订阅路径:', 'inventory_apps/' + appId + '/shared/main');
     const unsubscribe = onSnapshot(
       docRef,
       (docSnap) => {
@@ -315,14 +320,14 @@ const App = () => {
           })();
           setSkus(bootstrap);
           setSelectedSkuId(bootstrap[0]?.id ?? 1);
-          // 这里主动写入一次，确保云端 doc 被创建
+          // 主动写入，确保云端 doc 被创建
           setDoc(docRef, { items: bootstrap, lastUpdated: new Date().toISOString() }, { merge: true })
             .then(() => { 
               lastRemoteItemsJSONRef.current = JSON.stringify(bootstrap);
               console.log('✅ 云端初始化成功');
             })
             .catch((e) => {
-              console.error('❌ 初始化云端存档失败:', e);
+              console.error('❌ 初始化云端失败:', e.code, e.message);
               setSyncStatus('error');
             });
         }
@@ -331,18 +336,18 @@ const App = () => {
       },
       (err) => {
         // 常见：Firestore 配置指向了“没有创建 Firestore 数据库”的项目，或 projectId/authDomain 填错
-        console.error('❌ 存储读取错误:', err.code, err.message);
-        console.log('🔍 检查项：');
-        console.log('  1. Firebase 项目 ID 是否正确？');
-        console.log('  2. Firestore 数据库是否已创建？');
-        console.log('  3. 数据库安全规则是否允许读写？');
+        console.error('❌ Firestore 订阅错误:', err.code, err.message);
+        console.log('🔍 可能的原因：');
+        console.log('  1. 安全规则拒绝 (Permission denied)?');
+        console.log('  2. Firestore 数据库未创建?');
+        console.log('  3. 集合路径错误?');
         setSyncStatus('error');
         setIsInitialLoadDone(true); // 允许继续本地使用
       }
     );
 
     return () => unsubscribe();
-  }, [user, appId, localKey]);
+  }, [user, db, appId, localKey]);
 
   // --- 4.1 本地兜底自动存档（始终开启） ---
   useEffect(() => {
