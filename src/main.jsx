@@ -896,7 +896,28 @@ const App = () => {
       monthlyAvailability[i] = hasStockInMonth;
     }
     
-    return { ...sku, forecast: f, finalStockOutDate, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText, monthlyAvailability };
+    // 计算PO到货月份（从当前日期往后推12个月）
+    const monthlyPOs = Array(12).fill([]);
+    activePOs.forEach(po => {
+      const arrival = new Date(po.orderDate);
+      const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
+      arrival.setDate(arrival.getDate() + totalLT);
+      
+      // 检查这个到货日期是否在接下来的12个月内
+      const poMonth = arrival.getMonth();
+      const poYear = arrival.getFullYear();
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth();
+      
+      // 计算该PO相对于当前月份的索引
+      let monthOffset = (poYear - currentYear) * 12 + (poMonth - currentMonth);
+      
+      if (monthOffset >= 0 && monthOffset < 12) {
+        monthlyPOs[monthOffset] = [...(monthlyPOs[monthOffset] || []), po];
+      }
+    });
+    
+    return { ...sku, forecast: f, finalStockOutDate, orderDateStr, urgency, suggestQty, daysUntilStockout, monthsUntilStockout, riskLevel, riskText, monthlyAvailability, monthlyPOs };
   }), [skus, warningDays]);
 
   const coverageSummary = useMemo(() => {
@@ -1094,6 +1115,39 @@ const App = () => {
                   {/* 全年有货月份栏 */}
                   <div className="mt-2 space-y-1">
                     <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">12个月货态</div>
+                    
+                    {/* PO到货月份指示器 */}
+                    <div className="flex gap-0.5 h-3">
+                      {item.monthlyPOs?.map((pos, idx) => {
+                        // 获取该月份的PO信息
+                        const poColorMap = {
+                          'pending': 'bg-blue-500',
+                          'leg1_shipped': 'bg-yellow-500',
+                          'leg2_shipped': 'bg-orange-500',
+                          'leg3_shipped': 'bg-lime-500',
+                          'arrived': 'bg-emerald-500',
+                          'cancelled': 'bg-red-500'
+                        };
+                        
+                        if (pos.length === 0) {
+                          return <div key={idx} className="flex-1" />;
+                        }
+                        
+                        const po = pos[0]; // 如果有多个PO，显示第一个
+                        const poStatus = po.status || 'pending';
+                        const poColor = poColorMap[poStatus] || 'bg-slate-300';
+                        
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex-1 rounded-full ${poColor} relative group`}
+                            title={`${po.qty}件 - ${poStatus}`}
+                          />
+                        );
+                      })}
+                    </div>
+                    
+                    {/* 货态条 */}
                     <div className="flex gap-0.5">
                       {item.monthlyAvailability?.map((hasStock, idx) => {
                         // 根据当前日期计算实际月份
