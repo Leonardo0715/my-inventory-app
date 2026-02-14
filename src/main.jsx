@@ -881,7 +881,7 @@ const App = () => {
     const currentYear = today.getFullYear();
     const currentMonth = today.getMonth();
     
-    // 对于接下来的12个月，检查是否有货
+    // 对于接下来的12个月，检查是否有任何断货
     for (let i = 0; i < 12; i++) {
       let targetDate = new Date(currentYear, currentMonth + i, 1);
       const monthYear = targetDate.getFullYear();
@@ -891,9 +891,11 @@ const App = () => {
       const monthStart = new Date(monthYear, monthIdx, 1).toISOString().split('T')[0];
       const monthEnd = new Date(monthYear, monthIdx + 1, 0).toISOString().split('T')[0];
       
-      // 检查这个月内是否有任何一天库存>0
-      const hasStockInMonth = f.data.some(d => d.date >= monthStart && d.date <= monthEnd && d.stock > 0);
-      monthlyAvailability[i] = hasStockInMonth;
+      // 检查这个月内是否有任何一天库存=0（断货）
+      // 如果存在任何断货，monthlyAvailability为false（显示灰色）
+      // 如果整个月都有货（没有任何一天=0），monthlyAvailability为true（显示绿色）
+      const hasStockOutDay = f.data.some(d => d.date >= monthStart && d.date <= monthEnd && d.stock === 0);
+      monthlyAvailability[i] = !hasStockOutDay;
     }
     
     // 计算PO到货月份（从当前日期往后推12个月）
