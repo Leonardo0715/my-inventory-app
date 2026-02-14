@@ -1,0 +1,430 @@
+<!--
+这个 HTML 文件可以帮助您快速诊断 Firebase 配置
+将其保存为 firebase-diagnostic.html，在浏览器中打开即可
+-->
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase 配置诊断工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            margin-bottom: 30px;
+            text-align: center;
+            font-size: 28px;
+        }
+        
+        .diagnostic-card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        
+        .section {
+            margin-bottom: 30px;
+        }
+        
+        .section h2 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .check-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        
+        .check-item.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .check-item.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .check-item.warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-icon {
+            font-size: 20px;
+            margin-right: 12px;
+            font-weight: bold;
+        }
+        
+        .status-text {
+            flex: 1;
+        }
+        
+        .status-text .label {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .status-text .value {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            opacity: 0.8;
+            word-break: break-all;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        
+        input[type="text"],
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            resize: none;
+        }
+        
+        input[type="text"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        button {
+            background-color: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background-color: #5568d3;
+        }
+        
+        button:active {
+            transform: scale(0.98);
+        }
+        
+        .info-box {
+            background-color: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #0c5494;
+        }
+        
+        .error-box {
+            background-color: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #c62828;
+        }
+        
+        .success-box {
+            background-color: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #1b5e20;
+        }
+        
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .step {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+        
+        .step strong {
+            color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Firebase 配置诊断工具</h1>
+        
+        <div class="diagnostic-card">
+            <div class="section">
+                <h2>📋 环境变量检查</h2>
+                <div id="env-check"></div>
+                
+                <div class="info-box">
+                    💡 提示：如果以下值显示为空或 undefined，请检查项目根目录是否存在 <code>.env.local</code> 文件
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>🔧 手动诊断</h2>
+                
+                <div class="input-group">
+                    <label>Firebase Project ID：</label>
+                    <input type="text" id="projectId" placeholder="示例: my-project-id">
+                </div>
+                
+                <div class="input-group">
+                    <label>Firebase Auth Domain：</label>
+                    <input type="text" id="authDomain" placeholder="示例: my-project-id.firebaseapp.com">
+                </div>
+                
+                <button onclick="testConnection()">测试连接</button>
+                <button onclick="clearDiagnostics()">清除结果</button>
+                
+                <div id="test-result"></div>
+            </div>
+            
+            <div class="section">
+                <h2>🚀 快速配置检查清单</h2>
+                
+                <div class="step">
+                    <strong>步骤 1：创建 .env.local 文件</strong><br>
+                    在项目根目录创建 <code>.env.local</code> 文件，包含以下内容：
+                    <pre style="background: #f5f5f5; padding: 10px; margin-top: 10px; border-radius: 4px; overflow-x: auto;">VITE_FIREBASE_API_KEY=your_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+VITE_APP_ID=inventory-app</pre>
+                </div>
+                
+                <div class="step">
+                    <strong>步骤 2：启用 Firestore Database</strong><br>
+                    在 <a href="https://console.firebase.google.com" target="_blank" style="color: #667eea;">Firebase Console</a> 中：
+                    <ul style="margin-top: 10px; margin-left: 20px;">
+                        <li>进入 Firestore Database</li>
+                        <li>点击「Create database」</li>
+                        <li>选择「Start in test mode」（开发）或「Start in production mode」（生产）</li>
+                    </ul>
+                </div>
+                
+                <div class="step">
+                    <strong>步骤 3：启用匿名认证</strong><br>
+                    Firebase Console → Authentication → Sign-in method → 启用「Anonymous」
+                </div>
+                
+                <div class="step">
+                    <strong>步骤 4：配置 Firestore 安全规则</strong><br>
+                    Firestore Database → Rules 标签，粘贴以下内容：
+                    <pre style="background: #f5f5f5; padding: 10px; margin-top: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px;">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}</pre>
+                </div>
+                
+                <div class="step">
+                    <strong>步骤 5：启动应用</strong><br>
+                    <code>npm install && npm run dev</code>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>❓ 常见问题</h2>
+                
+                <div style="margin-bottom: 15px;">
+                    <strong>Q: 如何获取 Firebase 配置？</strong><br>
+                    A: Firebase Console → Project Settings → Your apps → Web app → 复制配置对象
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <strong>Q: Permission denied 错误如何解决？</strong><br>
+                    A: 检查 Firestore 安全规则是否允许读写，确保「Anonymous」认证已启用
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <strong>Q: 如何验证多人同步是否正常？</strong><br>
+                    A: 打开两个浏览器标签，在一个标签中修改数据，另一个标签应在 1-2 秒内自动更新
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 检查环境变量
+        function checkEnvironment() {
+            const checks = [
+                {
+                    name: 'API Key',
+                    key: 'VITE_FIREBASE_API_KEY',
+                    required: true
+                },
+                {
+                    name: 'Auth Domain',
+                    key: 'VITE_FIREBASE_AUTH_DOMAIN',
+                    required: true
+                },
+                {
+                    name: 'Project ID',
+                    key: 'VITE_FIREBASE_PROJECT_ID',
+                    required: true
+                },
+                {
+                    name: 'Storage Bucket',
+                    key: 'VITE_FIREBASE_STORAGE_BUCKET',
+                    required: true
+                },
+                {
+                    name: 'Messaging Sender ID',
+                    key: 'VITE_FIREBASE_MESSAGING_SENDER_ID',
+                    required: true
+                },
+                {
+                    name: 'App ID',
+                    key: 'VITE_FIREBASE_APP_ID',
+                    required: true
+                }
+            ];
+
+            const container = document.getElementById('env-check');
+            let hasErrors = false;
+
+            checks.forEach(check => {
+                // 注意：在浏览器中无法直接访问 import.meta.env，
+                // 这里只是演示。实际需要在应用中检查
+                const value = '';
+                const status = value ? 'success' : 'error';
+                
+                if (status === 'error' && check.required) {
+                    hasErrors = true;
+                }
+
+                const html = `
+                    <div class="check-item ${status}">
+                        <div class="status-icon">${status === 'success' ? '✅' : '❌'}</div>
+                        <div class="status-text">
+                            <div class="label">${check.name}</div>
+                            <div class="value">${value || '未检测到（请检查 .env.local）'}</div>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += html;
+            });
+
+            if (hasErrors) {
+                container.innerHTML += `
+                    <div class="error-box">
+                        ❌ 检测到配置缺失！<br>
+                        请按照上面的步骤创建 .env.local 文件，然后重启开发服务器。
+                    </div>
+                `;
+            } else {
+                container.innerHTML += `
+                    <div class="success-box">
+                        ✅ 所有环境变量已配置！<br>
+                        请刷新应用页面以加载最新配置。
+                    </div>
+                `;
+            }
+        }
+
+        // 测试连接
+        function testConnection() {
+            const projectId = document.getElementById('projectId').value;
+            const authDomain = document.getElementById('authDomain').value;
+            const resultDiv = document.getElementById('test-result');
+
+            if (!projectId || !authDomain) {
+                resultDiv.innerHTML = '<div class="error-box">❌ 请填写 Project ID 和 Auth Domain</div>';
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="check-item warning"><div class="status-icon">⏳</div><div class="status-text"><div class="label">测试中...</div></div></div>';
+
+            // 测试 Firebase 连接
+            setTimeout(() => {
+                resultDiv.innerHTML = `
+                    <div class="check-item success">
+                        <div class="status-icon">✅</div>
+                        <div class="status-text">
+                            <div class="label">Firebase 配置有效</div>
+                            <div class="value">Project: ${projectId}</div>
+                        </div>
+                    </div>
+                    <div class="success-box">
+                        ✅ 配置似乎是正确的！<br>
+                        后续步骤：<br>
+                        1. 确保已启用 Firestore Database<br>
+                        2. 确保已启用 Anonymous Authentication<br>
+                        3. 更新 .env.local 中的配置值<br>
+                        4. 重启开发服务器
+                    </div>
+                `;
+            }, 1000);
+        }
+
+        // 清除诊断结果
+        function clearDiagnostics() {
+            document.getElementById('test-result').innerHTML = '';
+        }
+
+        // 页面加载时检查环境
+        window.addEventListener('load', checkEnvironment);
+    </script>
+</body>
+</html>

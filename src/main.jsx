@@ -136,8 +136,8 @@ const App = () => {
   // 本地兜底：即使云端异常，也不会因为刷新直接丢失
   const localKey = useMemo(() => `inventory_forecast:${appId}:shared_v1`, []);
 
-  // 云端健康状态（初始化时只根据是否配置了 Firebase 来粗判断，真正连通性由 onSnapshot ...)
-  const [cloudOk, setCloudOk] = useState(!!db);
+  // 云端同步状态：'ready' = 就绪，'syncing' = 同步中，'error' = 错误，'offline' = 离线
+  const [syncStatus, setSyncStatus] = useState(db ? 'ready' : 'offline');
   const [horizonDays, setHorizonDays] = useState(365);
   const [onlyInboundDays, setOnlyInboundDays] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -183,7 +183,7 @@ const App = () => {
     ? (missingFirebaseEnv.length
         ? `离线模式（缺少：${missingFirebaseEnv.join(', ')}）`
         : '离线模式（仅本地记忆）')
-    : (cloudOk ? '云端同步已启用（多人共享）' : '云端连接异常：已降级本地');
+    : (syncStatus === 'ready' ? '✅ 云端同步已启用（多人共享）' : (syncStatus === 'syncing' ? '⏳ 正在同步中...' : '⚠️ 云端连接异常：已使用本地数据'));
 
   // 生成 PO 号的函数
   const generatePONumber = (skuId) => {
@@ -256,7 +256,7 @@ const App = () => {
 
     // 3.1 未配置 Firebase：只用本地
     if (!db) {
-      setCloudOk(false);
+      setSyncStatus('offline');
       setIsInitialLoadDone(true);
       return;
     }
@@ -268,7 +268,8 @@ const App = () => {
     const unsubscribe = onSnapshot(
       docRef,
       (docSnap) => {
-        setCloudOk(true);
+        setSyncStatus('ready');
+        console.log('✅ 云端数据订阅成功');
         if (docSnap.exists()) {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
           lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
@@ -287,10 +288,13 @@ const App = () => {
           setSelectedSkuId(bootstrap[0]?.id ?? 1);
           // 这里主动写入一次，确保云端 doc 被创建
           setDoc(docRef, { items: bootstrap, lastUpdated: new Date().toISOString() }, { merge: true })
-            .then(() => { lastRemoteItemsJSONRef.current = JSON.stringify(bootstrap); })
+            .then(() => { 
+              lastRemoteItemsJSONRef.current = JSON.stringify(bootstrap);
+              console.log('✅ 云端初始化成功');
+            })
             .catch((e) => {
-              console.error('初始化云端存档失败:', e);
-              setCloudOk(false);
+              console.error('❌ 初始化云端存档失败:', e);
+              setSyncStatus('error');
             });
         }
 
@@ -298,8 +302,12 @@ const App = () => {
       },
       (err) => {
         // 常见：Firestore 配置指向了“没有创建 Firestore 数据库”的项目，或 projectId/authDomain 填错
-        console.error('存储读取错误:', err);
-        setCloudOk(false);
+        console.error('❌ 存储读取错误:', err.code, err.message);
+        console.log('🔍 检查项：');
+        console.log('  1. Firebase 项目 ID 是否正确？');
+        console.log('  2. Firestore 数据库是否已创建？');
+        console.log('  3. 数据库安全规则是否允许读写？');
+        setSyncStatus('error');
         setIsInitialLoadDone(true); // 允许继续本地使用
       }
     );
@@ -318,7 +326,7 @@ const App = () => {
 
   // --- 4.2 云端自动存档（多人共享） ---
   useEffect(() => {
-    if (!db || !user || !cloudOk) return;
+    if (!db || !user) return;
     // 防丢保护：必须完成初始读取、且数据不为空才允许写回
     if (!isInitialLoadDone || skus.length === 0) return;
 
@@ -328,16 +336,19 @@ const App = () => {
 
     const remoteTimer = setTimeout(async () => {
       try {
+        setSyncStatus('syncing');
         await setDoc(docRef, { items: skus, lastUpdated: new Date().toISOString() }, { merge: true });
         lastRemoteItemsJSONRef.current = localJSON;
+        setSyncStatus('ready');
+        console.log('✅ 云端数据同步成功');
       } catch (err) {
-        console.error('自动云端存档失败:', err);
-        setCloudOk(false); // 自动降级本地，避免用户误以为云端成功
+        console.error('❌ 自动云端存档失败:', err.code, err.message);
+        setSyncStatus('error');
       }
     }, 1000);
 
     return () => clearTimeout(remoteTimer);
-  }, [skus, user, cloudOk, isInitialLoadDone, appId, db]);
+  }, [skus, user, isInitialLoadDone, appId, db]);
 
   // --- 5. 业务操作 ---
   const activeSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || (skus[0]?.id))) || null, [skus, selectedSkuId]);
