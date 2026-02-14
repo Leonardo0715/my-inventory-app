@@ -3,10 +3,10 @@ import ReactDOM from 'react-dom/client';
 import { 
   TrendingDown, Clock, Plus, AlertTriangle, BarChart3, 
   Check, X, Layout, List, RefreshCw, Save, Edit2,
-  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings
+  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 /**
@@ -34,6 +34,10 @@ const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
+
+// 白名单配置
+const ALLOWED_EMAILS = (import.meta.env.VITE_ALLOWED_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const isEmailAllowed = (email) => ALLOWED_EMAILS.includes(email.toLowerCase());
 
 // 🔍 诊断：输出 Firebase 配置状态
 console.log('🔍 Firebase 配置诊断：');
@@ -136,8 +140,14 @@ const App = () => {
   const [selectedSkuId, setSelectedSkuId] = useState(null);
   const [skus, setSkus] = useState([]);
   const [user, setUser] = useState(null);
-  // 统一走 loading -> ready，让云端/默认两种模式都能明确显示"加载记忆中"
+  // 认证状态：'loading' -> 'unauthenticated' (未登录) -> 'authenticated' (已登录) / 'error'
   const [status, setStatus] = useState('loading'); 
+  
+  // 登录表单状态
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   
   // 核心锁：标记是否已完成从存储引擎的第一次读取，防止空覆盖
   const [isInitialLoadDone, setIsInitialLoadDone] = useState(false); 
@@ -228,32 +238,91 @@ const App = () => {
   useEffect(() => {
     if (!auth) {
       console.warn('⚠️ Auth 未初始化，跳过身份认证');
+      setStatus('unauthenticated');
       return;
     }
     
-    const initAuth = async () => {
-      try {
-        console.log('🔐 开始匿名认证...');
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-          console.log('✅ 使用自定义 token 认证成功');
-        } else {
-          await signInAnonymously(auth);
-          console.log('✅ 匿名认证成功');
-        }
-      } catch (err) { 
-        console.error('❌ 认证失败:', err.code, err.message);
-        setStatus('error'); 
-      }
-    };
-    initAuth();
-    
     const unsubscribe = onAuthStateChanged(auth, (currUser) => {
-      console.log('👤 认证状态变化: currUser =', currUser ? currUser.uid : 'null');
-      setUser(currUser);
+      console.log('🔐 Auth 状态变化:', currUser ? `已登录 (${currUser.email})` : '未登录');
+      if (currUser) {
+        // 检查邮箱是否在白名单中
+        if (!isEmailAllowed(currUser.email)) {
+          console.log('❌ 邮箱不在白名单中:', currUser.email);
+          signOut(auth).then(() => {
+            setUser(null);
+            setStatus('unauthenticated');
+            setLoginError('❌ 你的邮箱未被授权访问此应用');
+          });
+          return;
+        }
+        setUser(currUser);
+        setStatus('authenticated');
+      } else {
+        setUser(null);
+        setStatus('unauthenticated');
+      }
     });
     return () => unsubscribe();
   }, []);
+
+  // --- 登录和登出函数 ---
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    setIsLoggingIn(true);
+
+    try {
+      if (!loginEmail.trim() || !loginPassword.trim()) {
+        setLoginError('邮箱和密码不能为空');
+        setIsLoggingIn(false);
+        return;
+      }
+
+      // 检查邮箱是否在白名单中
+      if (!isEmailAllowed(loginEmail)) {
+        setLoginError(`❌ 邮箱 ${loginEmail} 未被授权访问此应用`);
+        setIsLoggingIn(false);
+        return;
+      }
+
+      console.log('🔐 尝试登录:', loginEmail);
+      await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      console.log('✅ 登录成功');
+      setLoginEmail('');
+      setLoginPassword('');
+    } catch (err) {
+      console.error('❌ 登录失败:', err.code, err.message);
+      
+      if (err.code === 'auth/user-not-found') {
+        setLoginError('❌ 该邮箱未注册，请联系管理员');
+      } else if (err.code === 'auth/wrong-password') {
+        setLoginError('❌ 密码错误');
+      } else if (err.code === 'auth/invalid-email') {
+        setLoginError('❌ 邮箱格式不正确');
+      } else if (err.code === 'auth/too-many-requests') {
+        setLoginError('❌ 登录尝试次数过多，请稍后再试');
+      } else {
+        setLoginError(`❌ 登录失败: ${err.message}`);
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      console.log('✅ 登出成功');
+      setSkus([]);
+      setSelectedSkuId(null);
+      setLoginEmail('');
+      setLoginPassword('');
+      setLoginError('');
+    } catch (err) {
+      console.error('❌ 登出失败:', err.message);
+      setLoginError('登出失败，请重试');
+    }
+  };
 
   // --- 3.0 本地数据初始化（仅一次） ---
   useEffect(() => {
@@ -277,7 +346,7 @@ const App = () => {
       setSkus(initialData);
       setSelectedSkuId(initialData[0]?.id ?? 1);
       setViewMode('detail');
-      setStatus('ready');
+      if (status !== 'unauthenticated') setStatus('authenticated');
       console.log('✅ 使用默认数据');
     }
 
@@ -286,7 +355,7 @@ const App = () => {
       setSyncStatus('offline');
       setIsInitialLoadDone(true);
     }
-  }, [localKey]);
+  }, [localKey, status]);
 
   // --- 3.1 Firestore 订阅（当 user 认证成功后执行） ---
   useEffect(() => {
@@ -733,12 +802,69 @@ const App = () => {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   };
-
   // --- 7. UI 渲染 ---
-  if (status === 'loading') return (
-    <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-900 text-white font-bold animate-pulse">
-       <RefreshCw className="animate-spin mb-4 text-indigo-400" size={48} />
-       <span className="tracking-widest">系统正在加载记忆数据...</span>
+  // 未认证时显示登录页面
+  if (status === 'unauthenticated') return (
+    <div className="h-screen w-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-8">
+        <div className="text-center mb-8">
+          <div className="h-16 w-16 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+            <Lock size={32} className="text-white" />
+          </div>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">智策中心</h1>
+          <p className="text-slate-500 text-sm mt-2 font-medium">供应链全景指挥系统</p>
+        </div>
+
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-widest">邮箱地址</label>
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              placeholder="your@orynda.cn"
+              className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 font-medium text-slate-900"
+              disabled={isLoggingIn}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-2 uppercase tracking-widest">密码</label>
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              placeholder="你的密码"
+              className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 font-medium text-slate-900"
+              disabled={isLoggingIn}
+              onKeyDown={(e) => e.key === 'Enter' && handleLogin(e)}
+            />
+          </div>
+
+          {loginError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium">
+              {loginError}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isLoggingIn}
+            className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black hover:bg-indigo-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed uppercase tracking-widest text-sm"
+          >
+            {isLoggingIn ? '正在登录...' : '登录'}
+          </button>
+        </form>
+
+        <div className="mt-6 pt-6 border-t border-slate-200">
+          <p className="text-center text-[12px] text-slate-500 font-medium">
+            🔐 仅授权用户可访问
+          </p>
+          <p className="text-center text-[10px] text-slate-400 mt-2">
+            如需访问权限，请联系管理员
+          </p>
+        </div>
+      </div>
     </div>
   );
 
@@ -763,10 +889,12 @@ const App = () => {
                 <h2 className="text-xl font-black flex items-center gap-2 tracking-tight"><BarChart3 size={24}/> 智策中心</h2>
                 <div className="flex items-center gap-3">
                   <button onClick={() => setShowSettings(true)} className="p-1.5 hover:bg-indigo-800 rounded-lg transition-colors" title="打开设置"><Settings size={18} className="text-slate-300 hover:text-white"/></button>
+                  <button onClick={handleLogout} className="p-1.5 hover:bg-red-800 rounded-lg transition-colors" title="登出"><LogOut size={18} className="text-slate-300 hover:text-red-300"/></button>
                   <Save className="text-emerald-500 opacity-50" size={16}/>
                 </div>
               </div>
               <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-widest italic leading-relaxed">{memoryModeText}</p>
+              <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest mt-2">👤 {user?.email}</p>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {dashboardData.map(item => (
