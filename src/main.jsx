@@ -1075,6 +1075,58 @@ const App = () => {
               <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-widest italic leading-relaxed">{memoryModeText}</p>
               <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest mt-2">👤 {user?.email}</p>
             </div>
+            
+            {/* 图例说明 */}
+            <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 space-y-2">
+              <div className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-2">图例说明</div>
+              
+              {/* PO状态指示器 */}
+              <div className="space-y-1">
+                <div className="text-[8px] font-bold text-slate-500 uppercase">PO到货状态：</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span className="text-[8px] text-slate-600">待生产</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                    <span className="text-[8px] text-slate-600">海运中</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-orange-500" />
+                    <span className="text-[8px] text-slate-600">铁路中</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-lime-500" />
+                    <span className="text-[8px] text-slate-600">陆运中</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-[8px] text-slate-600">已到达</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-slate-300" />
+                    <span className="text-[8px] text-slate-600">无PO到货</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* 库存状态指示器 */}
+              <div className="space-y-1 pt-1 border-t border-slate-200">
+                <div className="text-[8px] font-bold text-slate-500 uppercase">库存货态：</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-sm bg-emerald-500" />
+                    <span className="text-[8px] text-slate-600">该月有货</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-sm bg-slate-200" />
+                    <span className="text-[8px] text-slate-600">该月缺货</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {dashboardData.map(item => (
                 <div 
@@ -1129,6 +1181,15 @@ const App = () => {
                           'cancelled': 'bg-red-500'
                         };
                         
+                        const poStatusLabel = {
+                          'pending': '待生产',
+                          'leg1_shipped': '海运中',
+                          'leg2_shipped': '铁路中',
+                          'leg3_shipped': '陆运中',
+                          'arrived': '已到达',
+                          'cancelled': '已取消'
+                        };
+                        
                         if (pos.length === 0) {
                           return <div key={idx} className="flex-1" />;
                         }
@@ -1136,12 +1197,13 @@ const App = () => {
                         const po = pos[0]; // 如果有多个PO，显示第一个
                         const poStatus = po.status || 'pending';
                         const poColor = poColorMap[poStatus] || 'bg-slate-300';
+                        const poStatusText = poStatusLabel[poStatus] || poStatus;
                         
                         return (
                           <div
                             key={idx}
                             className={`flex-1 rounded-full ${poColor} relative group`}
-                            title={`${po.qty}件 - ${poStatus}`}
+                            title={`${po.qty}件 ${poStatusText}`}
                           />
                         );
                       })}
