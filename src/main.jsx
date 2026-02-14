@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { 
   TrendingDown, Clock, Plus, AlertTriangle, BarChart3, 
   Check, X, Layout, List, RefreshCw, Save, Edit2,
-  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, WifiOff
+  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -153,9 +153,6 @@ const App = () => {
   
   // 核心锁：标记是否已完成从存储引擎的第一次读取，防止空覆盖
   const [isInitialLoadDone, setIsInitialLoadDone] = useState(false); 
-  
-  // 编辑防护：用户正在编辑任何字段时，暂停所有云端同步
-  const isEditingRef = useRef(false);
   
   const [showSeasonality, setShowSeasonality] = useState(false);
   const [renamingSkuId, setRenamingSkuId] = useState(null);
@@ -339,16 +336,8 @@ const App = () => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
 
-    console.log('📦 初始化...');
+    console.log('📦 开始本地数据初始化...');
 
-    // 云端优先：如果有 Firebase，等待 Firestore 订阅
-    if (db && user) {
-      console.log('☁️ Firebase 已配置，等待 Firestore 订阅数据...');
-      // 不做本地初始化，直接等待 Firestore 来
-      return;
-    }
-
-    // 没有 Firebase，使用降级方案（本地数据）
     const local = loadLocalMemory(localKey);
     if (local && Array.isArray(local.skus)) {
       const localSkus = sanitizeSkus(local.skus);
@@ -356,11 +345,28 @@ const App = () => {
         setSkus(localSkus);
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-      console.log('✅ 从本地恢复（离线模式）');
+      if (local.viewMode === 'detail' || local.viewMode === 'list') setViewMode(local.viewMode);
+      // 加载本地设置
+      if (local.warningDays) setWarningDays(local.warningDays);
+      if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
+      if (local.transportModes) setTransportModes(local.transportModes);
+      setStatus('ready');
+      console.log('✅ 从本地恢复成功');
+    } else {
+      const initialData = sanitizeSkus(DEFAULT_DATA);
+      setSkus(initialData);
+      setSelectedSkuId(initialData[0]?.id ?? 1);
+      setViewMode('detail');
+      if (status !== 'unauthenticated') setStatus('authenticated');
+      console.log('✅ 使用默认数据');
     }
-    setSyncStatus('offline');
-    setIsInitialLoadDone(true);
-  }, [localKey, db, user]);
+
+    if (!db) {
+      console.log('⚠️ Firebase 未初始化，仅使用本地数据');
+      setSyncStatus('offline');
+      setIsInitialLoadDone(true);
+    }
+  }, [localKey, status]);
 
   // --- 3.1 Firestore 订阅（当 user 认证成功后执行） ---
   useEffect(() => {
@@ -382,13 +388,6 @@ const App = () => {
       (docSnap) => {
         setSyncStatus('ready');
         console.log('✅ 云端数据订阅成功');
-        
-        // 编辑防护：用户正在编辑时，暂停所有云端同步
-        if (isEditingRef.current) {
-          console.log('⏸️ 用户正在编辑，暂不同步云端数据');
-          return;
-        }
-        
         if (docSnap.exists()) {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
           lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
@@ -436,7 +435,7 @@ const App = () => {
     );
 
     return () => unsubscribe();
-  }, [user, db, appId]);
+  }, [user, db, appId, localKey]);
 
   // --- 4.1 本地兜底自动存档（始终开启） ---
   useEffect(() => {
@@ -614,9 +613,7 @@ const App = () => {
   const updatePO = (skuId, poId, field, value) => {
     setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => p.id === poId ? { ...p, [field]: value } : p) } : s));
   };
-  const removePO = (skuId, poId) => {
-    setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).filter(p => p.id !== poId) } : s));
-  };
+  const removePO = (skuId, poId) => setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).filter(p => p.id !== poId) } : s));
   
   const duplicatePO = (skuId, poId) => {
     const sku = skus.find(s => s.id === skuId);
@@ -749,7 +746,6 @@ const App = () => {
             setWarning('CSV 文件未解析到有效数据');
             return;
           }
-          hasLocalChangesRef.current = true;
           setSkus(prev => prev.map(s => s.id === activeSku.id ? { ...s, pos: [...(s.pos || []), ...imported] } : s));
         } catch (err) {
           setWarning('CSV 文件解析失败：' + err.message);
@@ -780,7 +776,7 @@ const App = () => {
         // 排除已取消的采购单
         if (po.status === 'cancelled') return;
         const arrival = new Date(po.orderDate);
-        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0);
+        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
         arrival.setDate(arrival.getDate() + totalLT);
         if (arrival.toISOString().split('T')[0] === dateStr) incomingQty += Number(po.qty || 0);
       });
@@ -802,6 +798,7 @@ const App = () => {
   const activeForecast = useMemo(() => generateForecast(activeSku, 365), [activeSku, warningDays]);
   const dashboardData = useMemo(() => skus.map(sku => {
     const f = generateForecast(sku, 400);
+    
     let orderDateStr = "安全";
     let finalStockOutDate = "安全"; // 最终断货预测日期
     let urgency = 'normal', suggestQty = 0;
@@ -810,27 +807,45 @@ const App = () => {
     let riskLevel = 'safe'; // 'safe' (绿) / 'warning' (黄) / 'critical' (红)
     let riskText = '12月+ 安全';
     
-    // 查找关键日期：断货时间 或 库存恢复时间
-    const firstStockOut = f.data.findIndex(d => d.stock <= 0);
+    // 改进的逻辑：
+    // 如果当前库存为0或很低，且有待补货的PO，应该基于补货日期来计算覆盖天数
     let targetDayIndex = 400; // 默认安全
     
-    if (firstStockOut >= 0) {
-      // 有断货事件
-      targetDayIndex = firstStockOut; // 默认是断货日期
+    // 检查是否有待补货的PO
+    const activePOs = sku.pos?.filter(po => po.status !== 'cancelled') || [];
+    
+    if (Number(sku.currentStock || 0) === 0 && activePOs.length > 0) {
+      // 当前库存为0，有待补货的PO
+      // 找最早的补货日期
+      let earliestArrivalIndex = -1;
       
-      // 检查断货后是否会恢复（有采购单补货）
-      const recoveryPoint = f.data.slice(firstStockOut).findIndex((d, idx) => 
-        idx > 0 && d.stock > 0 && f.data[firstStockOut + idx - 1].stock <= 0
-      );
+      activePOs.forEach(po => {
+        const arrival = new Date(po.orderDate);
+        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
+        arrival.setDate(arrival.getDate() + totalLT);
+        const arrivalStr = arrival.toISOString().split('T')[0];
+        
+        const idx = f.data.findIndex(d => d.date === arrivalStr);
+        if (idx >= 0 && (earliestArrivalIndex === -1 || idx < earliestArrivalIndex)) {
+          earliestArrivalIndex = idx;
+        }
+      });
       
-      if (recoveryPoint >= 0) {
-        // 库存会恢复，计算恢复后的覆盖天数
-        const recoveryDayIndex = firstStockOut + recoveryPoint;
-        const recoveryStock = f.data[recoveryDayIndex].stock;
-        // 从恢复点开始计算还能覆盖多少天
-        const remainingDays = f.data.slice(recoveryDayIndex).findIndex(d => d.stock <= 0);
-        targetDayIndex = recoveryDayIndex + (remainingDays >= 0 ? remainingDays : 100);
+      if (earliestArrivalIndex >= 0) {
+        // 从最早的补货日期开始，计算还能覆盖多少天
+        const remainingDays = f.data.slice(earliestArrivalIndex).findIndex(d => d.stock <= 0);
+        targetDayIndex = remainingDays >= 0 ? remainingDays : 400;
       }
+    } else {
+      // 常规逻辑：查找最后库存>0的时刻
+      let lastPositiveIdx = -1;
+      for (let i = f.data.length - 1; i >= 0; i--) {
+        if (f.data[i].stock > 0) {
+          lastPositiveIdx = i;
+          break;
+        }
+      }
+      targetDayIndex = Math.max(0, lastPositiveIdx);
     }
     
     daysUntilStockout = Math.max(0, targetDayIndex);
@@ -992,43 +1007,6 @@ const App = () => {
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm overflow-hidden">
-      {/* 离线弹窗 */}
-      {syncStatus === 'error' && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[999] flex items-center justify-center">
-          <div className="bg-red-50 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 border-2 border-red-200 animate-in zoom-in-50">
-            <div className="flex justify-center mb-4">
-              <div className="h-16 w-16 bg-red-500 rounded-full flex items-center justify-center">
-                <WifiOff size={32} className="text-white" />
-              </div>
-            </div>
-            <h2 className="text-2xl font-black text-red-900 text-center mb-2">⚠️ 云端连接失败</h2>
-            <p className="text-center text-red-700 text-sm font-semibold mb-2">
-              无法连接到 Firestore 云数据库
-            </p>
-            <p className="text-center text-red-600 text-xs mb-6 leading-relaxed">
-              系统为保护数据一致性，已禁用所有操作。请检查网络连接或云端设置。
-            </p>
-            <div className="bg-red-100 rounded-lg p-4 mb-6 text-xs text-red-800">
-              <p className="font-bold mb-1">可尝试的操作：</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>刷新页面重新连接</li>
-                <li>检查网络连接</li>
-                <li>验证 Firebase 配置</li>
-              </ul>
-            </div>
-            <button 
-              onClick={() => window.location.reload()}
-              className="w-full bg-red-600 text-white py-2 rounded-lg font-bold hover:bg-red-700 transition-colors"
-            >
-              🔄 刷新页面
-            </button>
-          </div>
-        </div>
-      )}
-      {/* 禁用操作遮罩 */}
-      {syncStatus === 'error' && (
-        <div className="absolute inset-0 pointer-events-auto" style={{pointerEvents: syncStatus === 'error' ? 'auto' : 'none'}} />
-      )}
       {warning && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-100 border border-amber-300 text-amber-800 px-6 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 animate-in slide-in-from-top-2">
           <AlertCircle size={14} className="text-amber-500" />
@@ -1160,11 +1138,7 @@ const App = () => {
                              <input
                                type="number"
                                value={activeSku?.currentStock || 0}
-                               onFocus={() => isEditingRef.current = true}
-                               onBlur={() => isEditingRef.current = false}
-                               onChange={e => {
-                                 updateSku(activeSku.id, 'currentStock', clampNonNegativeInt(e.target.value, '当前库存'));
-                               }}
+                               onChange={e => updateSku(activeSku.id, 'currentStock', clampNonNegativeInt(e.target.value, '当前库存'))}
                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-3xl p-6 font-mono text-3xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
                              />
                            </div>
@@ -1178,8 +1152,6 @@ const App = () => {
                                    <input
                                      type="number"
                                      value={v}
-                                     onFocus={() => isEditingRef.current = true}
-                                     onBlur={() => isEditingRef.current = false}
                                      onChange={e => {
                                        const n = [...(activeSku.monthlySales || Array(12).fill(0))];
                                        n[i] = clampNonNegativeInt(e.target.value, '月度销量');
@@ -1292,22 +1264,18 @@ const App = () => {
                                           <input 
                                             type="text" 
                                             value={po.poNumber} 
-                                            onFocus={() => isEditingRef.current = true}
-                                            onBlur={() => isEditingRef.current = false}
                                             onChange={e => updatePO(activeSku.id, po.id, 'poNumber', e.target.value)} 
                                             className="text-sm font-black text-indigo-700 bg-indigo-50 rounded-lg px-3 py-2.5 w-full outline-none border border-indigo-200 focus:border-indigo-400 transition-colors mb-3 mt-2" 
                                           />
                                           <div className="grid grid-cols-2 gap-3 mb-3 font-bold uppercase text-xs">
                                             <div>
                                               <label className="text-[9px] font-black text-slate-400 block mb-1">下单日期</label>
-                                              <input type="date" value={po.orderDate} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'orderDate', e.target.value)} className="text-sm text-slate-600 bg-transparent outline-none w-full" />
+                                              <input type="date" value={po.orderDate} onChange={e => updatePO(activeSku.id, po.id, 'orderDate', e.target.value)} className="text-sm text-slate-600 bg-transparent outline-none w-full" />
                                             </div>
                                             <div>
                                               <label className="text-[9px] font-black text-slate-400 block mb-1">采购状态</label>
                                               <select 
                                                 value={po.status || 'ordered'} 
-                                                onFocus={() => isEditingRef.current = true}
-                                                onBlur={() => isEditingRef.current = false}
                                                 onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)}
                                                 className="text-xs font-black bg-slate-100 rounded px-2 py-1 border border-slate-300 focus:outline-none focus:border-indigo-500 w-full"
                                               >
@@ -1335,8 +1303,6 @@ const App = () => {
                                               <input
                                                 type="number"
                                                 value={po.qty}
-                                                onFocus={() => isEditingRef.current = true}
-                                                onBlur={() => isEditingRef.current = false}
                                                 onChange={e => updatePO(activeSku.id, po.id, 'qty', clampNonNegativeInt(e.target.value, '采购数量'))}
                                                 className="text-indigo-600 font-black bg-transparent w-full text-right outline-none font-mono text-xs"
                                               />
@@ -1349,8 +1315,6 @@ const App = () => {
                                                   <input
                                                     type="number"
                                                     value={po.prodDays}
-                                                    onFocus={() => isEditingRef.current = true}
-                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
                                                     className="w-12 text-right bg-transparent border-b border-slate-200 text-xs"
                                                   />天
@@ -1358,14 +1322,12 @@ const App = () => {
                                              </div>
                                              <div className="flex justify-between items-center text-blue-600 text-[9px]">
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg1Mode} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>头程
+                                                  <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>头程
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
                                                     value={po.leg1Days}
-                                                    onFocus={() => isEditingRef.current = true}
-                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
                                                     className="w-12 text-right bg-transparent border-b border-blue-100 text-xs"
                                                   />天
@@ -1373,14 +1335,12 @@ const App = () => {
                                              </div>
                                              <div className="flex justify-between items-center text-orange-600 text-[9px]">
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg2Mode} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>二程
+                                                  <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>二程
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
                                                     value={po.leg2Days}
-                                                    onFocus={() => isEditingRef.current = true}
-                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
                                                     className="w-12 text-right bg-transparent border-b border-orange-100 text-xs"
                                                   />天
@@ -1388,14 +1348,12 @@ const App = () => {
                                              </div>
                                              <div className="flex justify-between items-center text-emerald-600 text-[9px]">
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg3Mode} onFocus={() => isEditingRef.current = true} onBlur={() => isEditingRef.current = false} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>三程
+                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>三程
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
                                                     value={po.leg3Days}
-                                                    onFocus={() => isEditingRef.current = true}
-                                                    onBlur={() => isEditingRef.current = false}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg3Days', clampNonNegativeInt(e.target.value, '三程时效'))}
                                                     className="w-12 text-right bg-transparent border-b border-emerald-100 text-xs"
                                                   />天
