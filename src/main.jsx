@@ -1294,7 +1294,7 @@ const App = () => {
                                                     type="number"
                                                     value={po.prodDays}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
-                                                    className="w-6 text-right bg-transparent border-b border-slate-200 text-xs"
+                                                    className="w-12 text-right bg-transparent border-b border-slate-200 text-xs"
                                                   />天
                                                 </div>
                                              </div>
@@ -1307,7 +1307,7 @@ const App = () => {
                                                     type="number"
                                                     value={po.leg1Days}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
-                                                    className="w-6 text-right bg-transparent border-b border-blue-100 text-xs"
+                                                    className="w-12 text-right bg-transparent border-b border-blue-100 text-xs"
                                                   />天
                                                 </div>
                                              </div>
@@ -1320,7 +1320,7 @@ const App = () => {
                                                     type="number"
                                                     value={po.leg2Days}
                                                     onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
-                                                    className="w-6 text-right bg-transparent border-b border-orange-100 text-xs"
+                                                    className="w-12 text-right bg-transparent border-b border-orange-100 text-xs"
                                                   />天
                                                 </div>
                                              </div>
