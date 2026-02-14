@@ -1424,8 +1424,8 @@ const App = () => {
                 }
               });
 
-              // 状态配色
-              const statusColor = {
+              // 状态配色 - 根据主题调整
+              const statusColor = dashboardTheme === 'dark' ? {
                 pre_order: 'bg-gray-700 text-gray-200',
                 ordered: 'bg-slate-700 text-slate-200',
                 in_production: 'bg-yellow-900/50 text-yellow-200 border border-yellow-700',
@@ -1438,6 +1438,19 @@ const App = () => {
                 bonded_warehouse: 'bg-indigo-900/50 text-indigo-200 border border-indigo-700',
                 pending_shelving: 'bg-green-900/50 text-green-200 border border-green-700',
                 shelved: 'bg-emerald-900/50 text-emerald-200 border border-emerald-700'
+              } : {
+                pre_order: 'bg-gray-300 text-gray-900',
+                ordered: 'bg-slate-300 text-slate-900',
+                in_production: 'bg-yellow-200 text-yellow-900 border border-yellow-400',
+                prod_complete: 'bg-orange-200 text-orange-900 border border-orange-400',
+                leg1_shipped: 'bg-blue-200 text-blue-900 border border-blue-400',
+                leg1_arrived: 'bg-cyan-200 text-cyan-900 border border-cyan-400',
+                leg2_shipped: 'bg-violet-200 text-violet-900 border border-violet-400',
+                leg2_arrived: 'bg-purple-200 text-purple-900 border border-purple-400',
+                inspecting: 'bg-rose-200 text-rose-900 border border-rose-400',
+                bonded_warehouse: 'bg-indigo-200 text-indigo-900 border border-indigo-400',
+                pending_shelving: 'bg-green-200 text-green-900 border border-green-400',
+                shelved: 'bg-emerald-200 text-emerald-900 border border-emerald-400'
               };
 
               const statusLabel = {
@@ -1461,15 +1474,15 @@ const App = () => {
               return (
                 <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto">
                   {visiblePos.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500 font-bold text-sm">暂无采购单</div>
+                    <div className={`text-center py-8 font-bold text-sm ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-600'}`}>暂无采购单</div>
                   ) : (
                     visiblePos.map((po, idx) => (
-                      <div key={idx} className="flex items-center gap-4 px-4 py-3 bg-slate-800/50 rounded-xl border border-slate-700/50 hover:border-slate-600 transition-colors text-[11px]">
-                        <span className="font-bold text-indigo-300 min-w-[120px]">{po.skuName}</span>
-                        <span className="text-slate-400">PO: {po.poNumber}</span>
-                        <span className="text-slate-400">数量: {po.qty}</span>
-                        <span className="text-slate-400">下单: {po.orderDate}</span>
-                        <span className="text-slate-400">到货: {po.arrivalDate}</span>
+                      <div key={idx} className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors text-[11px] ${dashboardTheme === 'dark' ? 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600' : 'bg-gray-100 border-gray-300 hover:border-gray-400'}`}>
+                        <span className={`font-bold min-w-[120px] ${dashboardTheme === 'dark' ? 'text-indigo-300' : 'text-indigo-700'}`}>{po.skuName}</span>
+                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>PO: {po.poNumber}</span>
+                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>数量: {po.qty}</span>
+                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>下单: {po.orderDate}</span>
+                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>到货: {po.arrivalDate}</span>
                         <span className={`px-2 py-1 rounded-lg font-bold flex-shrink-0 ${statusColor[po.status] || statusColor.pending}`}>
                           {statusLabel[po.status] || '未知'}
                         </span>
@@ -1485,13 +1498,13 @@ const App = () => {
              <table className="w-full text-left border-collapse min-w-[1600px]">
                 <thead>
                    <tr className={`text-[11px] uppercase font-black tracking-widest border-b pb-8 ${dashboardTheme === 'dark' ? 'text-slate-600 border-slate-800/50' : 'text-gray-600 border-gray-300'}`}>
-                      <th className={`pb-8 pl-8 w-80 text-left ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-600'}`}>SKU 名称 / 全球 Reference</th>
-                      <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-600'}`}>实时库存</th>
-                      <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-600'}`}>断货预测日</th>
-                      <th className={`pb-8 text-center rounded-t-[2.5rem] border-x font-black shadow-xl ${dashboardTheme === 'dark' ? 'bg-indigo-950/30 border-indigo-900/20' : 'bg-indigo-100 border-indigo-200'}`}>下单决策 (T-{warningDays}D)</th>
+                      <th className={`pb-8 pl-8 w-80 text-left ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-700'}`}>SKU 名称 / 全球 Reference</th>
+                      <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-700'}`}>实时库存</th>
+                      <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-700'}`}>断货预测日</th>
+                      <th className={`pb-8 text-center rounded-t-[2.5rem] border-x font-black shadow-xl ${dashboardTheme === 'dark' ? 'bg-indigo-950/30 border-indigo-900/20 text-slate-400' : 'bg-indigo-100 border-indigo-200 text-indigo-700'}`}>下单决策 (T-{warningDays}D)</th>
                       {Array.from({length: 12}).map((_, i) => {
                         const d = new Date(); d.setMonth(d.getMonth() + i);
-                        return <th key={i} className={`pb-8 text-center w-28 font-black tracking-tighter ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>{(d.getMonth() + 1)}月预演</th>
+                        return <th key={i} className={`pb-8 text-center w-28 font-black tracking-tighter ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-gray-700'}`}>{(d.getMonth() + 1)}月预演</th>
                       })}
                    </tr>
                 </thead>
