@@ -226,20 +226,30 @@ const App = () => {
 
   // --- 2. 身份认证逻辑 ---
   useEffect(() => {
-    if (!auth) return;
+    if (!auth) {
+      console.warn('⚠️ Auth 未初始化，跳过身份认证');
+      return;
+    }
+    
     const initAuth = async () => {
       try {
+        console.log('🔐 开始匿名认证...');
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
+          console.log('✅ 使用自定义 token 认证成功');
         } else {
           await signInAnonymously(auth);
+          console.log('✅ 匿名认证成功');
         }
       } catch (err) { 
+        console.error('❌ 认证失败:', err.code, err.message);
         setStatus('error'); 
       }
     };
     initAuth();
+    
     const unsubscribe = onAuthStateChanged(auth, (currUser) => {
+      console.log('👤 认证状态变化: currUser =', currUser ? currUser.uid : 'null');
       setUser(currUser);
     });
     return () => unsubscribe();
@@ -276,9 +286,14 @@ const App = () => {
     }
 
     // 3.2 云端记忆模式：等待匿名登录后订阅 Firestore
-    if (!user) return;
+    if (!user) {
+      console.log('⏳ 等待用户认证(user 为空)...');
+      return;
+    }
 
+    console.log('🔄 user 已认证，开始 Firestore 订阅，uid:', user.uid);
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
+    console.log('📍 订阅路径:', 'inventory_apps/' + appId + '/shared/main');
     const unsubscribe = onSnapshot(
       docRef,
       (docSnap) => {
