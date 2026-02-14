@@ -1082,27 +1082,19 @@ const App = () => {
               
               {/* PO状态指示器 - 两列布局 */}
               <div className="space-y-0.5">
-                <div className="text-[7px] font-bold text-slate-500 uppercase">PO阶段：</div>
-                <div className="grid grid-cols-2 gap-1">
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                    <span className="text-[7px] text-slate-600">已下单</span>
-                  </div>
+                <div className="text-[7px] font-bold text-slate-500 uppercase">图例：</div>
+                <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
-                    <span className="text-[7px] text-slate-600">生产中</span>
+                    <span className="text-[7px] text-slate-600">PO到货</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                    <span className="text-[7px] text-slate-600">运输中</span>
+                    <div className="w-2 h-1.5 rounded-sm bg-emerald-500" />
+                    <span className="text-[7px] text-slate-600">有货</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-lime-500" />
-                    <span className="text-[7px] text-slate-600">清关中</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-600" />
-                    <span className="text-[7px] text-slate-600">已上架</span>
+                    <div className="w-2 h-1.5 rounded-sm bg-slate-200" />
+                    <span className="text-[7px] text-slate-600">断货</span>
                   </div>
                 </div>
               </div>
@@ -1149,58 +1141,22 @@ const App = () => {
                   <div className="mt-2 space-y-1">
                     <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">12个月货态</div>
                     
-                    {/* PO到货月份指示器 */}
+                    {/* PO到货月份指示器 - 只显示黄色点 */}
                     <div className="flex gap-0.5 h-3">
                       {item.monthlyPOs?.map((pos, idx) => {
-                        // 获取该月份的PO信息
-                        const poColorMap = {
-                          'pre_order': 'bg-slate-400',
-                          'ordered': 'bg-blue-500',
-                          'in_production': 'bg-blue-600',
-                          'prod_complete': 'bg-yellow-500',
-                          'leg1_shipped': 'bg-yellow-600',
-                          'leg1_arrived': 'bg-orange-500',
-                          'leg2_shipped': 'bg-orange-600',
-                          'leg2_arrived': 'bg-lime-500',
-                          'inspecting': 'bg-lime-600',
-                          'picking': 'bg-emerald-400',
-                          'bonded_warehouse': 'bg-emerald-500',
-                          'pending_shelving': 'bg-emerald-600',
-                          'shelved': 'bg-green-700',
-                          'cancelled': 'bg-red-500'
-                        };
-                        
-                        const poStatusLabel = {
-                          'pre_order': '预下订单',
-                          'ordered': '已下单',
-                          'in_production': '生产中',
-                          'prod_complete': '生产完成',
-                          'leg1_shipped': '头程发货',
-                          'leg1_arrived': '头程到货',
-                          'leg2_shipped': '二程发货',
-                          'leg2_arrived': '二程到货',
-                          'inspecting': '查验中',
-                          'picking': '提货中',
-                          'bonded_warehouse': '到达保税仓',
-                          'pending_shelving': '待理货上架',
-                          'shelved': '已理货上架',
-                          'cancelled': '已取消'
-                        };
-                        
                         if (pos.length === 0) {
                           return <div key={idx} className="flex-1" />;
                         }
                         
-                        const po = pos[0]; // 如果有多个PO，显示第一个
-                        const poStatus = po.status || 'pending';
-                        const poColor = poColorMap[poStatus] || 'bg-slate-300';
-                        const poStatusText = poStatusLabel[poStatus] || poStatus;
+                        // 如果这个月有PO，显示黄色点
+                        const poQty = pos.reduce((sum, po) => sum + (po.qty || 0), 0);
+                        const poInfo = pos.map(po => po.qty).join('+');
                         
                         return (
                           <div
                             key={idx}
-                            className={`flex-1 rounded-full ${poColor} relative group`}
-                            title={`${po.qty}件 ${poStatusText}`}
+                            className="flex-1 rounded-full bg-yellow-400 relative group"
+                            title={`${poInfo}件到货`}
                           />
                         );
                       })}
