@@ -245,7 +245,7 @@ const App = () => {
   useEffect(() => {
     if (!auth) {
       console.warn('⚠️ Auth 未初始化，跳过身份认证');
-      setStatus('unauthenticated');
+      setStatus('error');
       return;
     }
     
@@ -279,6 +279,11 @@ const App = () => {
     setIsLoggingIn(true);
 
     try {
+      if (!auth) {
+        setLoginError('Firebase 未配置，无法登录');
+        setIsLoggingIn(false);
+        return;
+      }
       if (!loginEmail.trim() || !loginPassword.trim()) {
         setLoginError('邮箱和密码不能为空');
         setIsLoggingIn(false);
@@ -350,14 +355,13 @@ const App = () => {
       if (local.warningDays) setWarningDays(local.warningDays);
       if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
       if (local.transportModes) setTransportModes(local.transportModes);
-      setStatus('ready');
       console.log('✅ 从本地恢复成功');
     } else {
       const initialData = sanitizeSkus(DEFAULT_DATA);
       setSkus(initialData);
       setSelectedSkuId(initialData[0]?.id ?? 1);
       setViewMode('detail');
-      if (status !== 'unauthenticated') setStatus('authenticated');
+      // 等待 auth 状态回调，避免未认证时短暂进入主界面
       console.log('✅ 使用默认数据');
     }
 
@@ -984,6 +988,50 @@ const App = () => {
     }
   };
   // --- 7. UI 渲染 ---
+  if (!hasFirebase) return (
+    <div className="min-h-screen w-screen bg-slate-950 flex items-center justify-center p-6">
+      <div className="max-w-xl w-full bg-white rounded-3xl shadow-2xl p-8">
+        <div className="flex items-center gap-3 mb-4">
+          <AlertTriangle size={28} className="text-amber-500" />
+          <h1 className="text-2xl font-black text-slate-900">Firebase 配置缺失</h1>
+        </div>
+        <p className="text-sm text-slate-600 font-medium mb-4">
+          当前环境缺少必要的 Firebase 配置，无法继续登录。请先补齐下列变量后重启开发服务器。
+        </p>
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+          <ul className="text-xs font-mono text-slate-700 space-y-1">
+            {missingFirebaseEnv.map((item) => (
+              <li key={item}>- {item}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (status === 'loading') return (
+    <div className="min-h-screen w-screen bg-slate-950 flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8 text-center">
+        <div className="text-sm font-black text-slate-700 tracking-widest uppercase">正在初始化</div>
+        <div className="mt-3 text-xs text-slate-500 font-medium">请稍候，正在确认登录状态</div>
+      </div>
+    </div>
+  );
+
+  if (status === 'error') return (
+    <div className="min-h-screen w-screen bg-slate-950 flex items-center justify-center p-6">
+      <div className="max-w-xl w-full bg-white rounded-3xl shadow-2xl p-8">
+        <div className="flex items-center gap-3 mb-4">
+          <AlertTriangle size={28} className="text-red-500" />
+          <h1 className="text-2xl font-black text-slate-900">初始化失败</h1>
+        </div>
+        <p className="text-sm text-slate-600 font-medium">
+          Firebase 初始化失败或认证服务不可用。请检查配置并重启开发服务器。
+        </p>
+      </div>
+    </div>
+  );
+
   // 未认证时显示登录页面
   if (status === 'unauthenticated') return (
     <div className="h-screen w-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 flex items-center justify-center p-4">
@@ -1539,7 +1587,7 @@ const App = () => {
                                         )}
                                         {isExpanded && (
                                           <div className="mt-2 text-[9px] text-slate-600 italic">
-                                            预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)) * 86400000).toLocaleDateString()}
+                                            预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)+Number(po.leg3Days)) * 86400000).toLocaleDateString()}
                                           </div>
                                         )}
                                      </div>
@@ -1725,7 +1773,7 @@ const App = () => {
               dashboardData.forEach(sku => {
                 (sku.pos || []).forEach(po => {
                   const arrivalDate = new Date(po.orderDate);
-                  const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0);
+                  const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
                   arrivalDate.setDate(arrivalDate.getDate() + totalLT);
                   
                   allPos.push({
