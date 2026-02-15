@@ -501,7 +501,7 @@ const App = () => {
     }, 1000);
 
     return () => clearTimeout(remoteTimer);
-  }, [skus, user, isInitialLoadDone, appId, db];
+  }, [skus, user, isInitialLoadDone, appId, db]);
 
   // --- 4.3 设置自动云端保存 ---
   useEffect(() => {
