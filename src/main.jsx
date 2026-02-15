@@ -81,8 +81,8 @@ try {
 }
 
 const DEFAULT_DATA = [
-  { id: 1, name: '旗舰商品 A (北美线)', currentStock: 1200, monthlySales: Array(12).fill(600), pos: [{ id: 101, poNumber: 'PO-20260214-001', orderDate: new Date().toISOString().split('T')[0], qty: 2500, prodDays: 30, leg1Mode: 'sea', leg1Days: 35, leg2Mode: 'rail', leg2Days: 15, leg3Mode: 'sea', leg3Days: 10 }] },
-  { id: 2, name: '高周转新品 B (东南亚)', currentStock: 4000, monthlySales: Array(12).fill(800), pos: [] }
+  { id: 1, name: '旗舰商品 A (北美线)', currentStock: 1200, unitCost: 0, monthlySales: Array(12).fill(600), pos: [{ id: 101, poNumber: 'PO-20260214-001', orderDate: new Date().toISOString().split('T')[0], qty: 2500, prodDays: 30, leg1Mode: 'sea', leg1Days: 35, leg2Mode: 'rail', leg2Days: 15, leg3Mode: 'sea', leg3Days: 10 }] },
+  { id: 2, name: '高周转新品 B (东南亚)', currentStock: 4000, unitCost: 0, monthlySales: Array(12).fill(800), pos: [] }
 ];
 
 function sanitizeSkus(items) {
@@ -91,8 +91,10 @@ function sanitizeSkus(items) {
     .filter(Boolean)
     .map((sku, idx) => {
       const id = Number.isFinite(Number(sku.id)) ? Number(sku.id) : (idx + 1);
-      const name = String(sku.name ?? `SKU #${id}`);
+      const name = String(sku.name ?? `商品 #${id}`);
       const currentStock = Number(sku.currentStock ?? 0);
+      const unitCostRaw = Number(sku.unitCost ?? 0);
+      const unitCost = Number.isFinite(unitCostRaw) && unitCostRaw >= 0 ? unitCostRaw : 0;
       const monthlySalesRaw = Array.isArray(sku.monthlySales) ? sku.monthlySales : [];
       const monthlySales = Array.from({ length: 12 }).map((_, i) => Number(monthlySalesRaw[i] ?? 0));
       const posRaw = Array.isArray(sku.pos) ? sku.pos : [];
@@ -110,7 +112,7 @@ function sanitizeSkus(items) {
         leg3Days: Number(po.leg3Days ?? 0),
         status: ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].includes(po.status) ? po.status : 'ordered',
       }));
-      return { id, name, currentStock, monthlySales, pos };
+      return { id, name, currentStock, unitCost, monthlySales, pos };
     });
 }
 
@@ -170,6 +172,7 @@ const App = () => {
   const [showQuickFill, setShowQuickFill] = useState(false);
   const [quickFillValue, setQuickFillValue] = useState('');
   const [poSortBy, setPoSortBy] = useState('orderDate'); // 'orderDate' 或 'arrivalDate'
+  const [poOverviewFilter, setPoOverviewFilter] = useState('all'); // 'all' | 'followup'
   const [expandedPoId, setExpandedPoId] = useState(null); // 展开的采购单ID
   const [poFilter, setPoFilter] = useState('all'); // 'all', 'pending', 'completed'
   const [dashboardTheme, setDashboardTheme] = useState('dark'); // 'dark' 或 'light'
@@ -235,6 +238,15 @@ const App = () => {
     let n = Number(raw);
     if (!Number.isFinite(n) || n < 0) n = 0;
     n = Math.floor(n);
+    if (n > 1_000_000) {
+      setWarning(`${fieldLabel} 超过 1,000,000 ，请确认是否输入有误`);
+    }
+    return n;
+  };
+
+  const clampNonNegativeNumber = (raw, fieldLabel) => {
+    let n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) n = 0;
     if (n > 1_000_000) {
       setWarning(`${fieldLabel} 超过 1,000,000 ，请确认是否输入有误`);
     }
@@ -512,6 +524,7 @@ const App = () => {
       id: newId,
       name: `新建商品 ${newId}`,
       currentStock: 0,
+      unitCost: 0,
       monthlySales: Array(12).fill(0),
       pos: []
     };
@@ -637,7 +650,7 @@ const App = () => {
 
   const exportPOsToJSON = () => {
     if (!activeSku || !activeSku.pos || activeSku.pos.length === 0) {
-      setWarning('当前 SKU 没有采购单数据可导出');
+      setWarning('当前商品没有采购单数据可导出');
       return;
     }
     const dataStr = JSON.stringify(activeSku.pos, null, 2);
@@ -652,7 +665,7 @@ const App = () => {
 
   const exportPOsToCSV = () => {
     if (!activeSku || !activeSku.pos || activeSku.pos.length === 0) {
-      setWarning('当前 SKU 没有采购单数据可导出');
+      setWarning('当前商品没有采购单数据可导出');
       return;
     }
     const headers = ['下单日期', '采购数量', '生产周期(天)', '头程方式', '头程时效(天)', '二程方式', '二程时效(天)', '预计到货日'];
@@ -968,6 +981,92 @@ const App = () => {
     return { stockoutWithinHorizon, needOrderSoon, orderWindowDays };
   }, [dashboardData]);
 
+  const salesSummary = useMemo(() => {
+    const totals = Array(12).fill(0);
+    skus.forEach(sku => {
+      (sku.monthlySales || []).forEach((v, i) => {
+        totals[i] += Number(v) || 0;
+      });
+    });
+    const annualTotal = totals.reduce((sum, v) => sum + v, 0);
+    const monthlyAvg = annualTotal / 12;
+    return { totals, annualTotal, monthlyAvg };
+  }, [skus]);
+
+  const stockSummary = useMemo(() => {
+    const onHandStock = skus.reduce((sum, sku) => sum + Number(sku.currentStock || 0), 0);
+    return { onHandStock };
+  }, [skus]);
+
+  const poSummary = useMemo(() => {
+    const statusCounts = { ordered: 0, production: 0, shipping: 0, inspection: 0, completed: 0 };
+    const arrivals = [];
+    let openQty = 0;
+    let openValue = 0;
+
+    dashboardData.forEach(sku => {
+      (sku.pos || []).forEach(po => {
+        if (po.status === 'cancelled') return;
+        const qty = Number(po.qty || 0);
+        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
+        const arrivalDate = new Date(new Date(po.orderDate).getTime() + totalLT * 86400000).toISOString().split('T')[0];
+
+        arrivals.push({
+          skuName: sku.name,
+          poNumber: po.poNumber,
+          qty,
+          arrivalDate,
+        });
+
+        if (po.status !== 'shelved') {
+          openQty += qty;
+          openValue += qty * Number(sku.unitCost || 0);
+        }
+
+        if (po.status === 'shelved') statusCounts.completed += 1;
+        else if (['in_production', 'prod_complete'].includes(po.status)) statusCounts.production += 1;
+        else if (['leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived'].includes(po.status)) statusCounts.shipping += 1;
+        else if (['inspecting', 'picking', 'bonded_warehouse', 'pending_shelving'].includes(po.status)) statusCounts.inspection += 1;
+        else statusCounts.ordered += 1;
+      });
+    });
+
+    const nextArrivals = arrivals.sort((a, b) => new Date(a.arrivalDate) - new Date(b.arrivalDate)).slice(0, 4);
+    return { statusCounts, openQty, openValue, nextArrivals };
+  }, [dashboardData]);
+
+  const monthlySummary = useMemo(() => {
+    const inboundTotals = Array(12).fill(0);
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth();
+
+    dashboardData.forEach(sku => {
+      const forecastRows = Array.isArray(sku.forecast?.data) ? sku.forecast.data : [];
+      forecastRows.forEach(row => {
+        if (!row.incomingQty) return;
+        const rowDate = new Date(row.date);
+        const monthOffset = (rowDate.getFullYear() - currentYear) * 12 + (rowDate.getMonth() - currentMonth);
+        if (monthOffset >= 0 && monthOffset < 12) {
+          inboundTotals[monthOffset] += Number(row.incomingQty) || 0;
+        }
+      });
+    });
+
+    const salesTotals = salesSummary.totals.map(v => Number(v) || 0);
+    const startStocks = Array(12).fill(0);
+    let rollingStock = stockSummary.onHandStock;
+    for (let i = 0; i < 12; i++) {
+      if (i > 0) {
+        rollingStock += (inboundTotals[i - 1] || 0) - (salesTotals[i - 1] || 0);
+      }
+      startStocks[i] = rollingStock;
+    }
+    return { startStocks, inboundTotals, salesTotals };
+  }, [dashboardData, salesSummary.totals, stockSummary.onHandStock]);
+
+  const hasUnitCost = useMemo(() => dashboardData.some(sku => Number(sku.unitCost || 0) > 0), [dashboardData]);
+
   const visibleForecastRows = useMemo(() => {
     if (!activeForecast || !activeForecast.data) return [];
     const sliceLen = Math.min(horizonDays + 1, activeForecast.data.length);
@@ -978,9 +1077,29 @@ const App = () => {
     return rows;
   }, [activeForecast, horizonDays, onlyInboundDays]);
 
+  const firstStockoutIdx = useMemo(() => {
+    if (!activeForecast || !activeForecast.data) return -1;
+    return activeForecast.data.findIndex(r => r.stock <= 0);
+  }, [activeForecast]);
+
+  const nextInboundIdx = useMemo(() => {
+    if (!activeForecast || !activeForecast.data) return -1;
+    return activeForecast.data.findIndex(r => r.incomingQty > 0);
+  }, [activeForecast]);
+
   const jumpToFirstStockout = () => {
     if (!activeForecast || !activeForecast.data) return;
     const idx = activeForecast.data.findIndex(d => d.stock <= 0);
+    if (idx === -1) return;
+    const el = document.getElementById(`forecast-row-${idx}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
+  const jumpToNextInbound = () => {
+    if (!activeForecast || !activeForecast.data) return;
+    const idx = activeForecast.data.findIndex(d => d.incomingQty > 0);
     if (idx === -1) return;
     const el = document.getElementById(`forecast-row-${idx}`);
     if (el) {
@@ -1098,7 +1217,7 @@ const App = () => {
   );
 
   return (
-    <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm overflow-hidden">
+    <div className="min-h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm overflow-y-auto">
       {warning && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-100 border border-amber-300 text-amber-800 px-6 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 animate-in slide-in-from-top-2">
           <AlertCircle size={14} className="text-amber-500" />
@@ -1108,11 +1227,11 @@ const App = () => {
           </button>
         </div>
       )}
-      <div className="flex-1 flex overflow-hidden bg-slate-100">
+      <div className="flex-1 flex bg-slate-100">
       {viewMode === 'detail' ? (
         <>
           {/* 侧边栏 */}
-          <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-20 flex-shrink-0">
+          <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-20 flex-shrink-0 h-screen sticky top-0 self-start">
             <div className="p-6 bg-indigo-950 text-white">
               <div className="flex justify-between items-center mb-1">
                 <h2 className="text-xl font-black flex items-center gap-2 tracking-tight"><BarChart3 size={24}/> 智策中心</h2>
@@ -1244,7 +1363,7 @@ const App = () => {
           </div>
 
           {/* 主工作区 */}
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col min-w-0">
             <header className="bg-white border-b px-6 py-5 shadow-sm flex-shrink-0">
               <div className="flex justify-between items-center mb-4">
                 <div>
@@ -1267,7 +1386,7 @@ const App = () => {
               <div className="grid grid-cols-3 gap-3 text-xs">
                 <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between shadow-sm">
                   <div>
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">当前 SKU 覆盖能力</div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">当前商品覆盖能力</div>
                     <div className="mt-2 flex items-baseline gap-2">
                       <span className="text-2xl font-black text-slate-900">
                         {coverageSummary ? coverageSummary.months : '--'}
@@ -1288,14 +1407,14 @@ const App = () => {
             </header>
             
             <main className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-               <div className="grid grid-cols-12 gap-6 h-full">
+               <div className="grid grid-cols-12 gap-6">
                   <div className="col-span-4 space-y-8">
                      {/* 参数配置 */}
                      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                         <h3 className="text-lg font-bold mb-8 flex items-center gap-3 text-slate-800 tracking-tighter uppercase"><TrendingDown className="text-indigo-600"/> 核心水位调配</h3>
                         <div className="space-y-6">
                            <div>
-                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 px-1">当前实物库存 PCS</label>
+                             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 px-1">当前实物库存（件）</label>
                              <input
                                type="number"
                                value={activeSku?.currentStock || 0}
@@ -1303,6 +1422,16 @@ const App = () => {
                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-3xl p-6 font-mono text-3xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
                              />
                            </div>
+                             <div>
+                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 px-1">单位成本</label>
+                               <input
+                                 type="number"
+                                 step="0.01"
+                                 value={activeSku?.unitCost ?? 0}
+                                 onChange={e => updateSku(activeSku.id, 'unitCost', clampNonNegativeNumber(e.target.value, '单位成本'))}
+                                 className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 font-mono text-xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
+                               />
+                             </div>
                            <button onClick={() => setShowSeasonality(!showSeasonality)} className="text-xs font-black text-indigo-600 hover:underline flex items-center gap-2">{showSeasonality ? '▲ 隐藏季节性配置' : '▼ 点击展开月度销量配置'}</button>
                            {showSeasonality && <button onClick={() => setShowQuickFill(true)} className="text-xs font-black text-emerald-600 hover:text-emerald-700">⚡ 快速填充</button>}
                            {showSeasonality && activeSku && (
@@ -1356,8 +1485,8 @@ const App = () => {
                                   已完成
                                 </button>
                               </div>
-                              <button onClick={exportPOsToJSON} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出 JSON">JSON</button>
-                              <button onClick={exportPOsToCSV} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出 CSV">CSV</button>
+                              <button onClick={exportPOsToJSON} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出数据">导出数据</button>
+                              <button onClick={exportPOsToCSV} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出表格">导出表格</button>
                               <button onClick={importPOsFromJSON} className="text-[11px] px-2 py-1 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 font-bold uppercase tracking-tighter" title="导入 JSON">导入</button>
                               <button onClick={() => addPO(activeSku.id)} className="bg-indigo-600 text-white p-2 rounded-xl hover:bg-indigo-700 active:scale-90 transition-all shadow-md"><Plus size={18}/></button>
                             </div>
@@ -1385,6 +1514,7 @@ const App = () => {
                                  <div className="space-y-2">
                                    {activeSku?.pos?.filter(po => po.status !== 'shelved' && po.status !== 'pre_order' && po.status !== 'cancelled').map(po => {
                                      const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays) * 86400000);
+                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000).toLocaleDateString();
                                      const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
                                      const isProductionWarning = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
                                      const isExpanded = expandedPoId === po.id;
@@ -1403,13 +1533,14 @@ const App = () => {
                                         >
                                           <span className="flex items-center gap-2 flex-1 text-left">
                                             <span className={`transition-transform text-[10px] ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-                                            <span className="text-[10px] font-black text-slate-500 uppercase">PO #{po.poNumber}</span>
+                                            <span className="text-[10px] font-black text-slate-500 uppercase">采购单号 {po.poNumber}</span>
                                           </span>
-                                          <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded px-2 py-0.5">{po.qty} PCS</span>
+                                          <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded px-2 py-0.5">{po.qty} 件</span>
                                         </button>
                                         {!isExpanded && (
                                           <div className="flex items-center justify-between gap-2 text-[10px] font-bold mt-2 px-1">
-                                            <span className="text-slate-600">{po.orderDate}</span>
+                                            <span className="text-slate-600">下单 {po.orderDate}</span>
+                                            <span className="text-slate-600">到货 {arrivalDate}</span>
                                             <span className="text-[9px] bg-slate-100 rounded px-1.5 py-0.5">{['预下订单', '已下单', '取消订单', '生产中', '生产完成', '头程发货', '头程到货', '二程发货', '二程到货', '查验中', '提货中', '到达保税仓', '待理货上架', '已理货上架'].find((_, i) => ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'][i] === po.status) || po.status}</span>
                                             <button 
                                               onClick={(e) => { e.stopPropagation(); removePO(activeSku.id, po.id); }}
@@ -1565,6 +1696,7 @@ const App = () => {
                                {expandedPoGroups.completed && (
                                  <div className="space-y-2">
                                    {activeSku?.pos?.filter(po => po.status === 'shelved').map(po => {
+                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000).toLocaleDateString();
                                      const isExpanded = expandedPoId === po.id;
                                      
                                      return (
@@ -1575,13 +1707,14 @@ const App = () => {
                                         >
                                           <span className="flex items-center gap-2 flex-1 text-left">
                                             <span className={`transition-transform text-[10px] ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-                                            <span className="text-[10px] font-black text-slate-500 uppercase">PO #{po.poNumber}</span>
+                                            <span className="text-[10px] font-black text-slate-500 uppercase">采购单号 {po.poNumber}</span>
                                           </span>
-                                          <span className="text-[11px] font-bold text-emerald-600 bg-emerald-100 rounded px-2 py-0.5">{po.qty} PCS</span>
+                                          <span className="text-[11px] font-bold text-emerald-600 bg-emerald-100 rounded px-2 py-0.5">{po.qty} 件</span>
                                         </button>
                                         {!isExpanded && (
                                           <div className="flex items-center justify-between gap-2 text-[10px] font-bold mt-2 px-1 text-emerald-700">
-                                            <span className="text-slate-600">{po.orderDate}</span>
+                                            <span className="text-slate-600">下单 {po.orderDate}</span>
+                                            <span className="text-slate-600">到货 {arrivalDate}</span>
                                             <span className="text-[9px] bg-emerald-100 rounded px-1.5 py-0.5">已理货上架</span>
                                           </div>
                                         )}
@@ -1606,7 +1739,7 @@ const App = () => {
                      <div className="px-6 py-4 border-b bg-slate-50/50">
                         <div className="flex items-center justify-between mb-3">
                           <span className="font-black text-slate-700 uppercase tracking-widest text-sm">
-                            Inventory Dynamics
+                            库存推演
                           </span>
                           <div className="flex gap-2 items-center">
                             <button
@@ -1643,6 +1776,12 @@ const App = () => {
                             >
                               <AlertTriangle size={12}/> 跳到首次断货
                             </button>
+                            <button
+                              onClick={jumpToNextInbound}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors text-[10px] font-bold"
+                            >
+                              <ArrowRight size={12}/> 跳到最近到货
+                            </button>
                             <div className="flex gap-3 items-center text-[10px] font-medium text-slate-500">
                               <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500"/>断货</span>
                               <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-400"/>低库存</span>
@@ -1652,15 +1791,15 @@ const App = () => {
                      </div>
                      <div className="flex-1 overflow-auto px-4 min-h-0">
                         <table className="w-full text-left border-collapse">
-                           <thead className="bg-white sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400 border-b">
-                              <tr><th className="p-4 pl-6 text-left">推演日期</th><th className="p-4 text-center">预估剩余库存 PCS</th><th className="p-4 text-right pr-6">实时判定</th></tr>
+                          <thead className="bg-white sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400 border-b">
+                            <tr><th className="p-4 pl-6 text-left">推演日期</th><th className="p-4 text-center">预估剩余库存（件）</th><th className="p-4 text-right pr-6">实时判定</th></tr>
                            </thead>
                            <tbody className="divide-y divide-slate-50 font-medium text-sm">
                               {visibleForecastRows.map((row) => (
                                 <tr
                                   key={row.__idx}
                                   id={`forecast-row-${row.__idx}`}
-                                  className={`hover:bg-indigo-50/30 transition-colors ${row.stock <= 0 ? 'bg-red-50/50' : (row.status === 'low' ? 'bg-amber-50/20' : '')}`}
+                                  className={`hover:bg-indigo-50/30 transition-colors ${row.stock <= 0 ? 'bg-red-50/50' : (row.status === 'low' ? 'bg-amber-50/20' : '')} ${row.incomingQty > 0 ? 'bg-emerald-50/30' : ''} ${(firstStockoutIdx >= 0 && row.__idx >= firstStockoutIdx - 30 && row.__idx <= firstStockoutIdx) ? 'border-l-4 border-amber-300' : ''}`}
                                 >
                                   <td className="p-3 pl-6 text-xs font-mono font-bold text-slate-500">{row.date}</td>
                                   <td className="p-3 text-center">
@@ -1674,8 +1813,8 @@ const App = () => {
                                     )}
                                   </td>
                                   <td className="p-3 text-right pr-6">
-                                     {row.stock <= 0 ? <span className="text-[10px] bg-red-600 text-white px-3 py-1 rounded-full font-black uppercase shadow-lg tracking-widest">Stockout</span> : 
-                                      (row.status === 'low' ? <span className="text-[10px] bg-amber-400 text-white px-3 py-1 rounded-full font-black uppercase shadow-md tracking-widest">Order Now</span> : <span className="text-[10px] text-emerald-500 font-black border border-emerald-200 px-3 py-1 rounded-full bg-emerald-50 uppercase tracking-widest leading-none">Safe</span>)}
+                                     {row.stock <= 0 ? <span className="text-[10px] bg-red-600 text-white px-3 py-1 rounded-full font-black uppercase shadow-lg tracking-widest">断货</span> : 
+                                      (row.status === 'low' ? <span className="text-[10px] bg-amber-400 text-white px-3 py-1 rounded-full font-black uppercase shadow-md tracking-widest">尽快下单</span> : <span className="text-[10px] text-emerald-500 font-black border border-emerald-200 px-3 py-1 rounded-full bg-emerald-50 uppercase tracking-widest leading-none">安全</span>)}
                                   </td>
                                 </tr>
                               ))}
@@ -1689,7 +1828,7 @@ const App = () => {
         </>
       ) : (
         /* --- 战略全景大屏 --- */
-        <div className={`flex-1 flex flex-col overflow-hidden p-6 transition-colors ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
+        <div className={`flex-1 flex flex-col p-6 transition-colors ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
           <div className="flex justify-between items-start mb-6 flex-shrink-0">
             <div className="flex items-start gap-8">
               <div className="flex items-center gap-6">
@@ -1697,16 +1836,16 @@ const App = () => {
                   <BarChart3 size={40}/>
                 </div>
                 <div>
-                  <h1 className="text-5xl font-black italic tracking-tighter uppercase">Strategic Command</h1>
+                  <h1 className="text-5xl font-black italic tracking-tighter uppercase">战略指挥中心</h1>
                   <p className={`font-bold uppercase tracking-[0.4em] text-[11px] mt-1 italic ${dashboardTheme === 'dark' ? 'text-indigo-500' : 'text-indigo-600'}`}>
-                    Deductive Engine: {warningDays}-Day Safe protocol active
+                    推演引擎：T-{warningDays}天安全协议已启用
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4 text-[11px]">
                 <div className={`rounded-2xl px-5 py-3 shadow-xl border-2 ${dashboardTheme === 'dark' ? 'bg-slate-900/70 border-rose-500/60' : 'bg-red-50 border-red-200'}`}>
                   <div className={`text-[9px] font-black uppercase tracking-[0.2em] mb-1 ${dashboardTheme === 'dark' ? 'text-rose-300' : 'text-red-700'}`}>
-                    未来一年内将断货 SKU
+                    未来一年内将断货商品
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span className={`text-3xl font-black ${dashboardTheme === 'dark' ? 'text-rose-400' : 'text-red-600'}`}>
@@ -1717,7 +1856,7 @@ const App = () => {
                 </div>
                 <div className={`rounded-2xl px-5 py-3 shadow-xl border-2 ${dashboardTheme === 'dark' ? 'bg-slate-900/70 border-amber-400/60' : 'bg-amber-50 border-amber-200'}`}>
                   <div className={`text-[9px] font-black uppercase tracking-[0.2em] mb-1 ${dashboardTheme === 'dark' ? 'text-amber-200' : 'text-amber-700'}`}>
-                    未来 {fleetKpi.orderWindowDays} 天需决策下单 SKU
+                    未来 {fleetKpi.orderWindowDays} 天需决策下单商品
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span className={`text-3xl font-black ${dashboardTheme === 'dark' ? 'text-amber-300' : 'text-amber-600'}`}>
@@ -1745,6 +1884,111 @@ const App = () => {
             </div>
           </div>
 
+          <div className="grid grid-cols-12 gap-4 mb-6">
+            <div className={`col-span-5 rounded-3xl border p-5 shadow-inner ${dashboardTheme === 'dark' ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-gray-200'}`}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className={`text-sm font-black uppercase tracking-[0.3em] ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
+                  库存与销量
+                </h3>
+                <div className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>商品数: {skus.length}</div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className={`rounded-2xl p-4 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className={`text-[9px] font-black uppercase tracking-[0.2em] ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>在仓库存</div>
+                  <div className={`mt-2 text-2xl font-black ${dashboardTheme === 'dark' ? 'text-emerald-300' : 'text-emerald-600'}`}>
+                    {Math.round(stockSummary.onHandStock).toLocaleString()}
+                  </div>
+                </div>
+                <div className={`rounded-2xl p-4 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className={`text-[9px] font-black uppercase tracking-[0.2em] ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>在途库存</div>
+                  <div className={`mt-2 text-2xl font-black ${dashboardTheme === 'dark' ? 'text-indigo-300' : 'text-indigo-600'}`}>
+                    {Math.round(poSummary.openQty).toLocaleString()}
+                  </div>
+                </div>
+                <div className={`rounded-2xl p-4 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className={`text-[9px] font-black uppercase tracking-[0.2em] ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>库存总量</div>
+                  <div className={`mt-2 text-2xl font-black ${dashboardTheme === 'dark' ? 'text-amber-200' : 'text-amber-600'}`}>
+                    {Math.round(stockSummary.onHandStock + poSummary.openQty).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-12 gap-1">
+                {monthlySummary.salesTotals.map((sales, idx) => {
+                  const monthStartStock = monthlySummary.startStocks[idx] || 0;
+                  const inboundQty = monthlySummary.inboundTotals[idx] || 0;
+                  const salesClass = dashboardTheme === 'dark'
+                    ? 'bg-slate-900/60 text-slate-200'
+                    : 'bg-slate-50 text-slate-700';
+                  return (
+                    <div key={idx} className={`rounded-xl px-2 py-2 text-center text-[9px] font-black border ${salesClass} ${dashboardTheme === 'dark' ? 'border-slate-800' : 'border-slate-200'}`}>
+                      <div>{idx + 1}月</div>
+                      <div className="text-[9px]">期初库存 {Math.round(monthStartStock).toLocaleString()}</div>
+                      <div className="text-[9px]">当月到货 {Math.round(inboundQty).toLocaleString()}</div>
+                      <div className={`text-[9px] ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>当月销量 {Math.round(sales).toLocaleString()}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={`col-span-4 rounded-3xl border p-5 shadow-inner ${dashboardTheme === 'dark' ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-gray-200'}`}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className={`text-sm font-black uppercase tracking-[0.3em] ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
+                  采购单进度
+                </h3>
+                <div className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>在途 {poSummary.openQty.toLocaleString()}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-[10px] font-black">
+                <div className={`rounded-xl p-3 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>已下单 {poSummary.statusCounts.ordered}</div>
+                <div className={`rounded-xl p-3 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>生产中 {poSummary.statusCounts.production}</div>
+                <div className={`rounded-xl p-3 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800 text-blue-200' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>运输中 {poSummary.statusCounts.shipping}</div>
+                <div className={`rounded-xl p-3 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800 text-violet-200' : 'bg-violet-50 border-violet-200 text-violet-700'}`}>查验/入库 {poSummary.statusCounts.inspection}</div>
+                <div className={`rounded-xl p-3 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800 text-emerald-200' : 'bg-emerald-50 border-emerald-200 text-emerald-700'} col-span-2`}>
+                  已完成 {poSummary.statusCounts.completed}
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className={`text-[9px] font-black uppercase tracking-[0.2em] ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>最近到货</div>
+                <div className="mt-2 space-y-2">
+                  {poSummary.nextArrivals.length === 0 ? (
+                    <div className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>暂无在途采购单</div>
+                  ) : (
+                    poSummary.nextArrivals.map((po, idx) => (
+                      <div key={`${po.poNumber}-${idx}`} className={`flex items-center justify-between rounded-xl px-3 py-2 text-[10px] font-bold ${dashboardTheme === 'dark' ? 'bg-slate-900 text-slate-300' : 'bg-slate-50 text-slate-700'}`}>
+                        <span className="truncate">{po.skuName}</span>
+                        <span className="text-slate-500">{po.arrivalDate}</span>
+                        <span className="text-emerald-500">+{Math.round(po.qty)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className={`col-span-3 rounded-3xl border p-5 shadow-inner ${dashboardTheme === 'dark' ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-gray-200'}`}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className={`text-sm font-black uppercase tracking-[0.3em] ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
+                  资金概览
+                </h3>
+              </div>
+              <div className={`rounded-2xl p-4 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                <div className={`text-[9px] font-black uppercase tracking-[0.2em] ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>在途数量</div>
+                <div className={`mt-2 text-3xl font-black ${dashboardTheme === 'dark' ? 'text-slate-100' : 'text-slate-900'}`}>
+                  {poSummary.openQty.toLocaleString()}
+                </div>
+              </div>
+              <div className={`mt-4 rounded-2xl p-4 border ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                <div className={`text-[9px] font-black uppercase tracking-[0.2em] ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>估算在途资金</div>
+                <div className={`mt-2 text-2xl font-black ${dashboardTheme === 'dark' ? 'text-amber-200' : 'text-amber-600'}`}>
+                  {hasUnitCost ? Math.round(poSummary.openValue).toLocaleString() : '未设置成本'}
+                </div>
+                <div className={`mt-1 text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>
+                  基于商品单位成本
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* 采购单总览表 */}
           <div className={`mb-6 rounded-3xl border p-6 shadow-inner ${dashboardTheme === 'dark' ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-gray-200'}`}>
             <div className={`flex justify-between items-center mb-4 pb-4 border-b ${dashboardTheme === 'dark' ? 'border-slate-700' : 'border-gray-200'}`}>
@@ -1752,6 +1996,20 @@ const App = () => {
                 📦 全部采购单总览
               </h3>
               <div className="flex gap-3">
+                <div className={`flex items-center gap-1 rounded-lg p-1 ${dashboardTheme === 'dark' ? 'bg-slate-800' : 'bg-gray-100'}`}>
+                  <button
+                    onClick={() => setPoOverviewFilter('all')}
+                    className={`px-3 py-2 rounded-lg text-xs font-black transition-colors ${poOverviewFilter === 'all' ? 'bg-indigo-600 text-white' : dashboardTheme === 'dark' ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                  >
+                    全部
+                  </button>
+                  <button
+                    onClick={() => setPoOverviewFilter('followup')}
+                    className={`px-3 py-2 rounded-lg text-xs font-black transition-colors ${poOverviewFilter === 'followup' ? 'bg-red-600 text-white' : dashboardTheme === 'dark' ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                  >
+                    需催促交货PO
+                  </button>
+                </div>
                 <button
                   onClick={() => setPoSortBy('orderDate')}
                   className={`px-4 py-2 rounded-lg text-xs font-black transition-colors ${poSortBy === 'orderDate' ? 'bg-indigo-600 text-white' : dashboardTheme === 'dark' ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
@@ -1775,12 +2033,17 @@ const App = () => {
                   const arrivalDate = new Date(po.orderDate);
                   const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
                   arrivalDate.setDate(arrivalDate.getDate() + totalLT);
+                  const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays || 0) * 86400000);
+                  const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
+                  const needsFollowUp = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
                   
                   allPos.push({
                     ...po,
                     skuId: sku.id,
                     skuName: sku.name,
-                    arrivalDate: arrivalDate.toISOString().split('T')[0]
+                    arrivalDate: arrivalDate.toISOString().split('T')[0],
+                    needsFollowUp,
+                    followUpDays: Math.ceil(daysUntilProdEnd)
                   });
                 });
               });
@@ -1839,7 +2102,10 @@ const App = () => {
               };
 
               // 过滤掉预下订单和已理货上架
-              const visiblePos = sorted.filter(po => po.status !== 'pre_order' && po.status !== 'shelved');
+              let visiblePos = sorted.filter(po => po.status !== 'pre_order' && po.status !== 'shelved');
+              if (poOverviewFilter === 'followup') {
+                visiblePos = visiblePos.filter(po => po.needsFollowUp);
+              }
 
               return (
                 <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto">
@@ -1849,13 +2115,18 @@ const App = () => {
                     visiblePos.map((po, idx) => (
                       <div key={idx} className={`flex items-center gap-4 px-4 py-3 rounded-xl border transition-colors text-[11px] ${dashboardTheme === 'dark' ? 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600' : 'bg-gray-100 border-gray-300 hover:border-gray-400'}`}>
                         <span className={`font-bold min-w-[120px] ${dashboardTheme === 'dark' ? 'text-indigo-300' : 'text-indigo-700'}`}>{po.skuName}</span>
-                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>PO: {po.poNumber}</span>
-                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>数量: {po.qty}</span>
+                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>采购单号: {po.poNumber}</span>
+                        <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>数量: {po.qty} 件</span>
                         <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>下单: {po.orderDate}</span>
                         <span className={dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-600'}>到货: {po.arrivalDate}</span>
                         <span className={`px-2 py-1 rounded-lg font-bold flex-shrink-0 ${statusColor[po.status] || statusColor.pending}`}>
                           {statusLabel[po.status] || '未知'}
                         </span>
+                        {po.needsFollowUp && (
+                          <span className={`px-2 py-1 rounded-lg font-bold flex-shrink-0 ${dashboardTheme === 'dark' ? 'bg-red-900/60 text-red-200 border border-red-700' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                            需催促交货 · {po.followUpDays}天
+                          </span>
+                        )}
                       </div>
                     ))
                   )}
@@ -1868,7 +2139,7 @@ const App = () => {
              <table className="w-full text-left border-collapse min-w-[1600px]">
                 <thead>
                    <tr className={`text-[11px] uppercase font-black tracking-widest border-b pb-8 ${dashboardTheme === 'dark' ? 'text-slate-600 border-slate-800/50' : 'text-gray-600 border-gray-300'}`}>
-                      <th className={`pb-8 pl-8 w-80 text-left ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-700'}`}>SKU 名称 / 全球 Reference</th>
+                      <th className={`pb-8 pl-8 w-80 text-left ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-700'}`}>商品名称 / 全局编号</th>
                       <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-700'}`}>实时库存</th>
                       <th className={`pb-8 text-center font-black ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-gray-700'}`}>断货预测日</th>
                       <th className={`pb-8 text-center rounded-t-[2.5rem] border-x font-black shadow-xl ${dashboardTheme === 'dark' ? 'bg-indigo-950/30 border-indigo-900/20 text-slate-400' : 'bg-indigo-100 border-indigo-200 text-indigo-700'}`}>下单决策 (T-{warningDays}D)</th>
@@ -1883,10 +2154,10 @@ const App = () => {
                      <tr key={sku.id} className={dashboardTheme === 'dark' ? 'hover:bg-slate-800/30 transition-all group' : 'hover:bg-gray-100 transition-all group'}>
                         <td className={`py-10 pl-8 font-black ${dashboardTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                           <div className={`text-2xl transition-colors uppercase tracking-tight ${dashboardTheme === 'dark' ? 'text-white group-hover:text-indigo-400' : 'text-slate-900 group-hover:text-indigo-600'}`}>{sku.name}</div>
-                          <div className={`text-[10px] mt-2 font-bold tracking-widest uppercase ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-gray-600'}`}>Global_ID: #00{sku.id}</div>
+                          <div className={`text-[10px] mt-2 font-bold tracking-widest uppercase ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-gray-600'}`}>全局编号: #00{sku.id}</div>
                         </td>
                         <td className={`py-10 text-center font-mono text-4xl font-black ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-900'}`}>{sku.currentStock?.toLocaleString()}</td>
-                        <td className="py-10 text-center">{sku.finalStockOutDate !== '安全' ? <div className="text-red-500 font-black text-2xl drop-shadow-lg animate-pulse">{sku.finalStockOutDate}</div> : <div className="text-emerald-500 font-black text-2xl uppercase tracking-tighter flex items-center justify-center gap-3"><Check size={28}/> Secure</div>}</td>
+                        <td className="py-10 text-center">{sku.finalStockOutDate !== '安全' ? <div className="text-red-500 font-black text-2xl drop-shadow-lg animate-pulse">{sku.finalStockOutDate}</div> : <div className="text-emerald-500 font-black text-2xl uppercase tracking-tighter flex items-center justify-center gap-3"><Check size={28}/> 安全</div>}</td>
                         <td className={`py-10 px-6 shadow-inner border-x ${dashboardTheme === 'dark' ? 'bg-indigo-900/10 border-indigo-900/20' : 'bg-indigo-50 border-indigo-200'}`}>
                            {sku.finalStockOutDate !== '安全' ? (
                              <div className={`p-6 rounded-[2.5rem] border-4 shadow-2xl ${sku.urgency === 'critical' ? 'bg-red-900/40 border-red-500 animate-pulse' : dashboardTheme === 'dark' ? 'bg-indigo-900/40 border-indigo-500 text-white' : 'bg-indigo-100 border-indigo-400 text-indigo-900'}`}>
@@ -1894,7 +2165,7 @@ const App = () => {
                                 <div className="text-2xl font-black text-center mb-4">{sku.orderDateStr}</div>
                                 <div className={`mt-2 pt-4 flex justify-between items-center ${dashboardTheme === 'dark' ? 'border-t border-white/10' : 'border-t border-indigo-300'}`}><span className="text-[10px] font-black opacity-60 uppercase tracking-tighter">建议补货量</span><span className="text-2xl font-mono font-black">{sku.suggestQty.toFixed(0)}</span></div>
                              </div>
-                           ) : <div className={`text-center font-black text-[10px] uppercase tracking-[0.5em] py-10 italic ${dashboardTheme === 'dark' ? 'text-slate-700' : 'text-gray-600'}`}>Strategic Stable</div>}
+                           ) : <div className={`text-center font-black text-[10px] uppercase tracking-[0.5em] py-10 italic ${dashboardTheme === 'dark' ? 'text-slate-700' : 'text-gray-600'}`}>战略稳定</div>}
                         </td>
                         {sku.forecast.monthEndStocks.slice(0, 12).map((m, i) => (
                            <td key={i} className="py-10 text-center">
