@@ -1939,6 +1939,19 @@ const App = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              {/* 同步状态指示器 */}
+              <div className={`px-4 py-3 rounded-[1.5rem] font-black text-xs uppercase tracking-widest shadow-lg border-2 flex items-center gap-2 transition-all ${
+                syncStatus === 'ready' ? (dashboardTheme === 'dark' ? 'bg-emerald-900/50 border-emerald-600 text-emerald-300' : 'bg-emerald-50 border-emerald-300 text-emerald-700') :
+                syncStatus === 'syncing' ? (dashboardTheme === 'dark' ? 'bg-amber-900/50 border-amber-600 text-amber-300 animate-pulse' : 'bg-amber-50 border-amber-300 text-amber-700 animate-pulse') :
+                syncStatus === 'error' ? (dashboardTheme === 'dark' ? 'bg-red-900/50 border-red-600 text-red-300' : 'bg-red-50 border-red-300 text-red-700') :
+                (dashboardTheme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-gray-100 border-gray-300 text-slate-600')
+              }`}>
+                {syncStatus === 'ready' && '✅ 已同步'}
+                {syncStatus === 'syncing' && '⏳ 同步中...'}
+                {syncStatus === 'error' && '❌ 同步失败'}
+                {syncStatus === 'offline' && '⚠️ 离线模式'}
+              </div>
+
               <button
                 onClick={() => setDashboardTheme(dashboardTheme === 'dark' ? 'light' : 'dark')}
                 className={`px-4 py-3 rounded-[1.5rem] font-black transition-all active:scale-95 flex items-center gap-2 text-xs uppercase tracking-widest shadow-lg border-2 ${dashboardTheme === 'dark' ? 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-white' : 'bg-white border-gray-300 hover:bg-gray-100 text-slate-900'}`}
