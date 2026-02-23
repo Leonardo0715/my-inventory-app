@@ -2572,7 +2572,7 @@ const App = () => {
               return (
                 <div className="w-full">
                   <table className="w-full text-left border-collapse table-fixed">
-                    <thead className={`sticky top-0 z-10 text-xs font-bold uppercase tracking-wider border-b ${dashboardTheme === 'dark' ? 'bg-slate-900/95 text-slate-500 border-slate-800' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
+                    <thead className={`sticky top-0 z-10 text-xs font-bold uppercase tracking-wider border-b ${dashboardTheme === 'dark' ? 'bg-slate-900/95 text-slate-300 border-slate-800' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
                       <tr>
                         <th className="py-3 px-4 font-medium w-56">商品信息</th>
                         <th className="py-3 px-4 font-medium w-32">采购单号</th>
@@ -2582,7 +2582,7 @@ const App = () => {
                         <th className="py-3 px-4 font-medium w-40">异常/备注</th>
                       </tr>
                     </thead>
-                    <tbody className={`divide-y text-xs font-medium ${dashboardTheme === 'dark' ? 'divide-slate-800/50 text-slate-400' : 'divide-slate-100 text-slate-600'}`}>
+                    <tbody className={`divide-y text-xs font-medium ${dashboardTheme === 'dark' ? 'divide-slate-800/50 text-slate-300' : 'divide-slate-100 text-slate-600'}`}>
                       {visiblePos.length === 0 ? (
                         <tr>
                             <td colSpan="6" className="py-12 text-center italic opacity-60">没有找到符合条件的采购单</td>
@@ -2596,24 +2596,24 @@ const App = () => {
                             
                             return (
                                 <tr key={idx} className={`transition-colors ${dashboardTheme === 'dark' ? 'hover:bg-slate-800/40' : 'hover:bg-slate-50'}`}>
-                                    <td className="py-3 px-4">
+                                    <td className="py-3.5 px-4">
                                       <div className={`font-bold text-sm mb-0.5 truncate max-w-[220px] ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>{po.skuName}</div>
                                         <div className="opacity-60 text-[10px]">ID: {po.skuId}</div>
                                     </td>
-                                    <td className="py-3 px-4 font-mono opacity-80">{po.poNumber}</td>
-                                    <td className="py-3 px-4 text-right font-mono font-bold">{po.qty}</td>
-                                    <td className="py-3 px-4 text-center">
+                                    <td className="py-3.5 px-4 font-mono opacity-90">{po.poNumber}</td>
+                                    <td className="py-3.5 px-4 text-right font-mono font-bold">{po.qty}</td>
+                                    <td className="py-3.5 px-4 text-center">
                                         <span className={`px-2 py-1 rounded text-[10px] font-bold inline-block ${badgeClass}`}>
                                             {statusLabel[po.status] || po.status}
                                         </span>
                                     </td>
-                                    <td className="py-3 px-4">
+                                    <td className="py-3.5 px-4">
                                         <div className="flex flex-col gap-0.5 text-[10px]">
                                             <div className="flex justify-between"><span>下单:</span> <span className="font-mono">{po.orderDate}</span></div>
                                             <div className="flex justify-between"><span>预计:</span> <span className={`${dashboardTheme === 'dark' ? 'text-emerald-400' : 'text-emerald-600'} font-mono`}>{po.arrivalDate}</span></div>
                                         </div>
                                     </td>
-                                    <td className="py-3 px-4">
+                                    <td className="py-3.5 px-4">
                                         {po.needsFollowUp ? (
                                             <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold ${dashboardTheme === 'dark' ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-100 text-red-600'}`}>
                                                 <AlertTriangle size={12} className="flex-shrink-0"/>
@@ -2645,10 +2645,10 @@ const App = () => {
             </div>
 
             <div className="flex-1 flex flex-col min-h-0">
-              <div className={`text-[10px] font-bold uppercase tracking-wider mb-3 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>
+              <div className={`text-[10px] font-bold uppercase tracking-wider mb-3 ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-400'}`}>
                 各 SKU 补货数量建议 与 补货后最早断货日期
               </div>
-              <div className={`grid grid-cols-[1fr_110px_110px] items-center text-[10px] font-bold uppercase tracking-wider px-2 pb-2 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>
+              <div className={`grid grid-cols-[1fr_110px_110px] items-center text-[10px] font-bold uppercase tracking-wider px-2 pb-2 ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-400'}`}>
                 <div>SKU</div>
                 <div className="text-right">补货建议</div>
                 <div className="text-right">最早断货</div>
@@ -2662,7 +2662,7 @@ const App = () => {
                       <div className="grid grid-cols-[1fr_110px_110px] items-center gap-3">
                         <div className="min-w-0">
                           <div className={`font-bold text-sm truncate ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>{row.name}</div>
-                          <div className={`text-[10px] mt-0.5 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>ID: {row.id}</div>
+                          <div className={`text-[10px] mt-0.5 ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-400'}`}>ID: {row.id}</div>
                         </div>
                         <div className="text-right">
                           <div className={`text-sm font-black font-mono ${dashboardTheme === 'dark' ? 'text-rose-300' : 'text-rose-700'}`}>
