@@ -2262,7 +2262,7 @@ const App = () => {
         </div>
       ) : (
         /* --- 战略全景大屏 --- */
-        <div className={`flex-1 flex flex-col p-6 transition-colors overflow-hidden ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
+        <div className={`flex-1 flex flex-col p-6 transition-colors overflow-y-auto ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
           <div className="flex justify-between items-start mb-6 flex-shrink-0">
             <div className="flex items-start gap-8">
               <div className="flex items-center gap-6">
@@ -2270,7 +2270,7 @@ const App = () => {
                   <BarChart3 size={40}/>
                 </div>
                 <div>
-                  <h1 className="text-5xl font-black italic tracking-tighter uppercase">战略指挥中心</h1>
+                  <h1 className="text-4xl font-black italic tracking-tighter uppercase">战略指挥中心</h1>
                   <p className={`font-bold uppercase tracking-[0.4em] text-[11px] mt-1 italic ${dashboardTheme === 'dark' ? 'text-indigo-500' : 'text-indigo-600'}`}>
                     推演引擎：T-{warningDays}天安全协议已启用
                   </p>
@@ -2331,11 +2331,11 @@ const App = () => {
             </div>
           </div>
 
-          <div className="flex-1 flex gap-6 min-h-0 h-[calc(100vh-280px)]">
+          <div className="grid grid-cols-[1fr_320px] gap-6 mb-5">
             {/* 左侧：核心库存指标和采购状态 */}
-            <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-6">
+            <div className="pr-2 flex flex-col gap-4">
               {/* 核心库存指标 */}
-              <div className={`rounded-[2rem] border p-6 shadow-sm ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+              <div className={`rounded-[2rem] border p-5 shadow-sm ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
               <div className="flex items-center justify-between mb-6">
                 <h3 className={`text-base font-bold flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>
                   <div className={`w-2 h-6 rounded-full ${dashboardTheme === 'dark' ? 'bg-indigo-500' : 'bg-indigo-600'}`}></div>
@@ -2347,7 +2347,7 @@ const App = () => {
               </div>
               
               {/* 三大核心指标 */}
-              <div className="grid grid-cols-3 gap-6 mb-8">
+              <div className="grid grid-cols-3 gap-4 mb-4">
                 <div className={`relative overflow-hidden rounded-2xl p-5 border transition-all hover:scale-[1.02] cursor-default ${dashboardTheme === 'dark' ? 'bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700' : 'bg-gradient-to-br from-indigo-50/50 to-white border-indigo-100'}`}>
                   <div className={`text-xs font-medium mb-2 ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>在仓库存 (On Hand)</div>
                   <div className={`text-3xl font-bold tracking-tight ${dashboardTheme === 'dark' ? 'text-emerald-400' : 'text-slate-800'}`}>
@@ -2379,7 +2379,7 @@ const App = () => {
             </div>
 
             {/* 采购状态概览 */}
-            <div className={`rounded-[2rem] border p-6 shadow-sm flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+            <div className={`rounded-[2rem] border p-5 shadow-sm flex flex-col overflow-hidden max-h-[260px] ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
               <div className="flex items-center justify-between mb-6">
                 <h3 className={`text-base font-bold flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>
                   <div className={`w-2 h-6 rounded-full ${dashboardTheme === 'dark' ? 'bg-emerald-500' : 'bg-emerald-600'}`}></div>
@@ -2388,7 +2388,7 @@ const App = () => {
               </div>
 
               {/* 状态甜甜圈/列表替代品 */}
-              <div className="space-y-3 flex-1">
+              <div className="space-y-2 flex-1 overflow-y-auto min-h-0">
                 {[
                   { label: '已下单 (Ordered)', count: poSummary.statusCounts.ordered, color: 'slate' },
                   { label: '生产中 (In Production)', count: poSummary.statusCounts.production, color: 'amber' },
@@ -2406,7 +2406,7 @@ const App = () => {
               </div>
 
               {/* 最近到货小部件 */}
-              <div className={`mt-6 pt-6 border-t ${dashboardTheme === 'dark' ? 'border-slate-800' : 'border-slate-100'}`}>
+              <div className={`mt-3 pt-3 border-t ${dashboardTheme === 'dark' ? 'border-slate-800' : 'border-slate-100'}`}>
                 <div className={`text-xs font-bold mb-3 uppercase tracking-wider ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>未来一个月内到货预告</div>
                 <div className="space-y-2">
                   {poSummary.nextArrivals.length === 0 ? (
@@ -2428,7 +2428,7 @@ const App = () => {
             </div>
 
             {/* 右侧：库存推演 - 专用滚轮 */}
-            <div style={{ width: '320px', height: '400px', flexShrink: 0 }} className={`rounded-[2rem] border p-6 shadow-sm flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+            <div style={{ width: '320px', height: '320px', flexShrink: 0 }} className={`rounded-[2rem] border p-5 shadow-sm flex flex-col sticky top-6 self-start ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
               <div className={`text-sm font-bold mb-4 flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>
                 <Calendar size={16} /> 未来12个月供需推演
               </div>
@@ -2471,8 +2471,8 @@ const App = () => {
             </div>
           </div>
           
-          <div className="grid grid-cols-12 gap-6 mb-8">
-          <div className={`col-span-8 rounded-[2rem] border p-0 shadow-sm overflow-hidden flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`} style={{ maxHeight: '600px' }}>
+          <div className="grid grid-cols-12 gap-6 mb-6">
+          <div className={`col-span-8 rounded-[2rem] border p-0 shadow-sm overflow-hidden flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`} style={{ maxHeight: '520px' }}>
             <div className={`px-6 py-5 border-b flex justify-between items-center ${dashboardTheme === 'dark' ? 'border-slate-800' : 'border-slate-100'}`}>
               <div className="flex items-center gap-4">
                 <h3 className={`text-base font-bold flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>
@@ -2636,7 +2636,7 @@ const App = () => {
           </div>
 
           {/* 右侧信息位 */}
-          <div className={`col-span-4 rounded-[2rem] border p-6 shadow-sm flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+          <div className={`col-span-4 rounded-[2rem] border p-6 shadow-sm flex flex-col overflow-hidden min-h-0 ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`} style={{ maxHeight: '520px' }}>
             <div className="flex items-center justify-between mb-6">
               <h3 className={`text-base font-bold flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>
                 <div className={`w-2 h-6 rounded-full ${dashboardTheme === 'dark' ? 'bg-rose-500' : 'bg-rose-600'}`}></div>
@@ -2644,7 +2644,7 @@ const App = () => {
               </h3>
             </div>
 
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col min-h-0">
               <div className={`text-[10px] font-bold uppercase tracking-wider mb-3 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>
                 各 SKU 补货数量建议 与 补货后最早断货日期
               </div>
@@ -2653,7 +2653,7 @@ const App = () => {
                 <div className="text-right">补货建议</div>
                 <div className="text-right">最早断货</div>
               </div>
-              <div className={`flex-1 overflow-y-auto pr-1 space-y-2 ${dashboardTheme === 'dark' ? 'scrollbar-thin scrollbar-thumb-slate-700/80' : 'scrollbar-thin scrollbar-thumb-slate-200'}`}>
+              <div className={`flex-1 overflow-y-auto min-h-0 pr-1 space-y-2 ${dashboardTheme === 'dark' ? 'scrollbar-thin scrollbar-thumb-slate-700/80' : 'scrollbar-thin scrollbar-thumb-slate-200'}`}>
                 {replenishmentRows.length === 0 ? (
                   <div className={`text-xs italic ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-slate-400'}`}>暂无需要补货的 SKU</div>
                 ) : (
