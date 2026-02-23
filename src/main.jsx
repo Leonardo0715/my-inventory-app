@@ -1288,7 +1288,7 @@ const App = () => {
   );
 
   return (
-    <div className="min-h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm overflow-y-auto">
+    <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm overflow-hidden">
       {warning && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-100 border border-amber-300 text-amber-800 px-6 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 animate-in slide-in-from-top-2">
           <AlertCircle size={14} className="text-amber-500" />
@@ -1298,7 +1298,7 @@ const App = () => {
           </button>
         </div>
       )}
-      <div className="flex-1 flex bg-slate-100">
+      <div className="flex-1 flex bg-slate-100 overflow-hidden">
       {viewMode === 'detail' ? (
         <>
           {/* 侧边栏 */}
@@ -1314,12 +1314,12 @@ const App = () => {
               </div>
 
               {/* 状态和说明行 */}
-              <div className="flex items-center gap-3 justify-between">
-                <div className="flex-1">
+              <div className="flex flex-col gap-2">
+                <div>
                   <p className="text-xs text-indigo-300 font-bold uppercase tracking-widest italic">{memoryModeText}</p>
-                  <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider mt-1">👤 {user?.email}</p>
+                  <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider mt-1 break-words">👤 {user?.email}</p>
                 </div>
-                <div className={`px-2.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap flex-shrink-0 ${
+                <div className={`px-2.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap inline-block ${
                   syncStatus === 'ready' ? 'bg-emerald-600 text-emerald-100' :
                   syncStatus === 'syncing' ? 'bg-amber-600 text-amber-100 animate-pulse' :
                   syncStatus === 'error' ? 'bg-red-600 text-red-100' :
@@ -1703,8 +1703,9 @@ const App = () => {
                                                 </div>
                                              </div>
                                              <div className="flex justify-between items-center text-blue-600 text-[9px]">
+                                                <span>头程</span>
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>头程
+                                                  <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
@@ -1716,8 +1717,9 @@ const App = () => {
                                                 </div>
                                              </div>
                                              <div className="flex justify-between items-center text-orange-600 text-[9px]">
+                                                <span>二程</span>
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>二程
+                                                  <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
@@ -1729,8 +1731,9 @@ const App = () => {
                                                 </div>
                                              </div>
                                              <div className="flex justify-between items-center text-emerald-600 text-[9px]">
+                                                <span>三程</span>
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>三程
+                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
@@ -1825,7 +1828,7 @@ const App = () => {
                   </div>
 
                   {/* 推演线性表 */}
-                  <div className="col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-0">
+                  <div className="col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-0 h-[calc(100vh-220px)] sticky top-6 self-start">
                      <div className="px-6 py-4 border-b bg-slate-50/50">
                         <div className="flex items-center justify-between mb-3">
                           <span className="font-black text-slate-700 uppercase tracking-widest text-sm">
@@ -1879,7 +1882,7 @@ const App = () => {
                           </div>
                         </div>
                      </div>
-                     <div className="flex-1 overflow-auto px-4 min-h-0">
+                     <div className="flex-1 overflow-y-scroll overflow-x-auto px-4 min-h-0">
                         <table className="w-full text-left border-collapse">
                           <thead className="bg-white sticky top-0 z-10 text-[10px] uppercase font-bold text-slate-400 border-b">
                             <tr><th className="p-4 pl-6 text-left">推演日期</th><th className="p-4 text-center">预估剩余库存（件）</th><th className="p-4 text-right pr-6">实时判定</th></tr>
@@ -1918,7 +1921,7 @@ const App = () => {
         </>
       ) : (
         /* --- 战略全景大屏 --- */
-        <div className={`flex-1 flex flex-col p-6 transition-colors ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
+        <div className={`flex-1 flex flex-col p-6 transition-colors overflow-hidden ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
           <div className="flex justify-between items-start mb-6 flex-shrink-0">
             <div className="flex items-start gap-8">
               <div className="flex items-center gap-6">
@@ -1987,9 +1990,11 @@ const App = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-12 gap-6 mb-8">
-            {/* 核心库存指标 - 占据左侧 */}
-            <div className={`col-span-8 rounded-[2rem] border p-6 shadow-sm ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+          <div className="flex-1 flex gap-6 min-h-0 h-[calc(100vh-280px)]">
+            {/* 左侧：核心库存指标和采购状态 */}
+            <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-6">
+              {/* 核心库存指标 */}
+              <div className={`rounded-[2rem] border p-6 shadow-sm ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
               <div className="flex items-center justify-between mb-6">
                 <h3 className={`text-base font-bold flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>
                   <div className={`w-2 h-6 rounded-full ${dashboardTheme === 'dark' ? 'bg-indigo-500' : 'bg-indigo-600'}`}></div>
@@ -2030,62 +2035,10 @@ const App = () => {
                   <div className={`text-[10px] mt-1 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>基于在途数量 * 成本</div>
                 </div>
               </div>
-
-              {/* 12个月趋势条 - 重新设计 */}
-              <div>
-                <div className={`text-xs font-bold mb-4 flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>
-                  <Calendar size={14} /> 未来12个月供需推演 (Supply & Demand)
-                </div>
-                <div className="grid grid-cols-12 gap-2">
-                  {monthlySummary.salesTotals.map((sales, idx) => {
-                    const monthDate = new Date();
-                    monthDate.setDate(1);
-                    monthDate.setMonth(monthDate.getMonth() + idx);
-                    const monthLabel = `${monthDate.getFullYear()}/${monthDate.getMonth() + 1}`;
-                    const monthStartStock = monthlySummary.startStocks[idx] || 0;
-                    const inboundQty = monthlySummary.inboundTotals[idx] || 0;
-                    const netChange = inboundQty - sales;
-                    const endStock = monthStartStock + netChange;
-                    const isNetPositive = netChange >= 0;
-
-                    return (
-                      <div key={idx} className={`rounded-xl border flex flex-col p-3 h-32 transition-all group ${dashboardTheme === 'dark' ? 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white hover:shadow-lg hover:border-indigo-100'}`}>
-                        {/* 顶部月份 */}
-                        <div className={`text-[10px] font-black uppercase tracking-wider mb-2 flex justify-between items-center ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>
-                          <span>{monthLabel}</span>
-                        </div>
-                        
-                        {/* 核心数据区 - 纯数字大字体 */}
-                        <div className="flex-1 flex flex-col justify-between">
-                           {/* 销量 */}
-                           <div className="flex justify-between items-baseline">
-                              <span className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>销</span>
-                              <span className={`text-sm font-black font-mono ${dashboardTheme === 'dark' ? 'text-rose-300' : 'text-rose-500'}`}>{Math.round(sales)}</span>
-                           </div>
-                           
-                           {/* 到货 */}
-                           <div className="flex justify-between items-baseline">
-                              <span className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>到</span>
-                              <span className={`text-sm font-black font-mono ${inboundQty > 0 ? (dashboardTheme === 'dark' ? 'text-emerald-300' : 'text-emerald-600') : 'text-slate-300/30'}`}>{Math.round(inboundQty)}</span>
-                           </div>
-
-                           {/* 剩余库存 - 突出显示 */}
-                           <div className={`flex justify-between items-center pt-2 mt-1 border-t border-dashed ${dashboardTheme === 'dark' ? 'border-slate-700' : 'border-slate-200'}`}>
-                              <span className={`text-[10px] font-bold ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>余</span>
-                              <span className={`text-lg font-black font-mono tracking-tight ${dashboardTheme === 'dark' ? 'text-indigo-200' : 'text-indigo-700'}`}>
-                                 {Math.round(endStock).toLocaleString()}
-                              </span>
-                           </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
 
-            {/* 采购状态概览 - 占据右侧 */}
-            <div className={`col-span-4 rounded-[2rem] border p-6 shadow-sm flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+            {/* 采购状态概览 */}
+            <div className={`rounded-[2rem] border p-6 shadow-sm flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
               <div className="flex items-center justify-between mb-6">
                 <h3 className={`text-base font-bold flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>
                   <div className={`w-2 h-6 rounded-full ${dashboardTheme === 'dark' ? 'bg-emerald-500' : 'bg-emerald-600'}`}></div>
@@ -2131,9 +2084,52 @@ const App = () => {
                 </div>
               </div>
             </div>
-          </div>
+            </div>
 
-          {/* 采购单总览表 - 重构版 */}
+            {/* 右侧：库存推演 - 专用滚轮 */}
+            <div style={{ width: '320px', height: '400px', flexShrink: 0 }} className={`rounded-[2rem] border p-6 shadow-sm flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`}>
+              <div className={`text-sm font-bold mb-4 flex items-center gap-2 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>
+                <Calendar size={16} /> 未来12个月供需推演
+              </div>
+              <div style={{ overflowY: 'auto', flex: '1 1 0', minHeight: 0 }} className="pr-2">
+                <div className="grid grid-cols-2 gap-2">
+                {monthlySummary.salesTotals.map((sales, idx) => {
+                  const monthDate = new Date();
+                  monthDate.setDate(1);
+                  monthDate.setMonth(monthDate.getMonth() + idx);
+                  const monthLabel = `${monthDate.getFullYear()}/${monthDate.getMonth() + 1}`;
+                  const monthStartStock = monthlySummary.startStocks[idx] || 0;
+                  const inboundQty = monthlySummary.inboundTotals[idx] || 0;
+                  const netChange = inboundQty - sales;
+                  const endStock = monthStartStock + netChange;
+
+                  return (
+                    <div key={idx} className={`rounded-lg border flex flex-col p-2.5 h-28 transition-all text-[10px] ${dashboardTheme === 'dark' ? 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600' : 'bg-slate-50 border-slate-100 hover:bg-white hover:border-indigo-100'}`}>
+                      <div className={`font-bold mb-1.5 ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-400'}`}>
+                        {monthLabel}
+                      </div>
+                      <div className="flex-1 flex flex-col justify-between space-y-1">
+                        <div className="flex justify-between">
+                          <span className={dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}>销</span>
+                          <span className={`font-black ${dashboardTheme === 'dark' ? 'text-rose-300' : 'text-rose-500'}`}>{Math.round(sales)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className={dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}>到</span>
+                          <span className={`font-black ${inboundQty > 0 ? (dashboardTheme === 'dark' ? 'text-emerald-300' : 'text-emerald-600') : 'text-slate-300/30'}`}>{Math.round(inboundQty)}</span>
+                        </div>
+                        <div className={`flex justify-between pt-1 border-t border-dashed ${dashboardTheme === 'dark' ? 'border-slate-700' : 'border-slate-200'}`}>
+                          <span className={dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}>余</span>
+                          <span className={`font-black ${dashboardTheme === 'dark' ? 'text-indigo-200' : 'text-indigo-700'}`}>{Math.round(endStock)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <div className="grid grid-cols-12 gap-6 mb-8">
           <div className={`col-span-8 rounded-[2rem] border p-0 shadow-sm overflow-hidden flex flex-col ${dashboardTheme === 'dark' ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-100'}`} style={{ maxHeight: '600px' }}>
             <div className={`px-6 py-5 border-b flex justify-between items-center ${dashboardTheme === 'dark' ? 'border-slate-800' : 'border-slate-100'}`}>
