@@ -1307,6 +1307,17 @@ const App = () => {
               <div className="flex justify-between items-center mb-1">
                 <h2 className="text-xl font-black flex items-center gap-2 tracking-tight"><BarChart3 size={24}/> 智策中心</h2>
                 <div className="flex items-center gap-3">
+                  <div className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                    syncStatus === 'ready' ? 'bg-emerald-600 text-emerald-100' :
+                    syncStatus === 'syncing' ? 'bg-amber-600 text-amber-100 animate-pulse' :
+                    syncStatus === 'error' ? 'bg-red-600 text-red-100' :
+                    'bg-slate-700 text-slate-300'
+                  }`}>
+                    {syncStatus === 'ready' && '✅ 已同步'}
+                    {syncStatus === 'syncing' && '⏳ 同步中'}
+                    {syncStatus === 'error' && '❌ 失败'}
+                    {syncStatus === 'offline' && '⚠️ 离线'}
+                  </div>
                   <button onClick={() => setShowSettings(true)} className="p-1.5 hover:bg-indigo-800 rounded-lg transition-colors" title="打开设置"><Settings size={18} className="text-slate-300 hover:text-white"/></button>
                   <button onClick={handleLogout} className="p-1.5 hover:bg-red-800 rounded-lg transition-colors" title="登出"><LogOut size={18} className="text-slate-300 hover:text-red-300"/></button>
                   <Save className="text-emerald-500 opacity-50" size={16}/>
