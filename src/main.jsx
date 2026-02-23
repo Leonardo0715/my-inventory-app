@@ -1303,54 +1303,62 @@ const App = () => {
         <>
           {/* 侧边栏 */}
           <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-20 flex-shrink-0 h-screen sticky top-0 self-start">
-            <div className="p-6 bg-indigo-950 text-white">
-              <div className="flex justify-between items-center mb-1">
-                <h2 className="text-xl font-black flex items-center gap-2 tracking-tight"><BarChart3 size={24}/> 智策中心</h2>
-                <div className="flex items-center gap-3">
-                  <div className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
-                    syncStatus === 'ready' ? 'bg-emerald-600 text-emerald-100' :
-                    syncStatus === 'syncing' ? 'bg-amber-600 text-amber-100 animate-pulse' :
-                    syncStatus === 'error' ? 'bg-red-600 text-red-100' :
-                    'bg-slate-700 text-slate-300'
-                  }`}>
-                    {syncStatus === 'ready' && '✅ 已同步'}
-                    {syncStatus === 'syncing' && '⏳ 同步中'}
-                    {syncStatus === 'error' && '❌ 失败'}
-                    {syncStatus === 'offline' && '⚠️ 离线'}
-                  </div>
+            <div className="p-6 bg-indigo-950 text-white space-y-3">
+              {/* 标题行 */}
+              <div className="flex justify-between items-center">
+                <h2 className="text-lg font-black flex items-center gap-2 tracking-tight"><BarChart3 size={24}/> 智策中心</h2>
+                <div className="flex items-center gap-2">
                   <button onClick={() => setShowSettings(true)} className="p-1.5 hover:bg-indigo-800 rounded-lg transition-colors" title="打开设置"><Settings size={18} className="text-slate-300 hover:text-white"/></button>
                   <button onClick={handleLogout} className="p-1.5 hover:bg-red-800 rounded-lg transition-colors" title="登出"><LogOut size={18} className="text-slate-300 hover:text-red-300"/></button>
-                  <Save className="text-emerald-500 opacity-50" size={16}/>
                 </div>
               </div>
-              <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-widest italic leading-relaxed">{memoryModeText}</p>
-              <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest mt-2">👤 {user?.email}</p>
+
+              {/* 状态和说明行 */}
+              <div className="flex items-center gap-3 justify-between">
+                <div className="flex-1">
+                  <p className="text-xs text-indigo-300 font-bold uppercase tracking-widest italic">{memoryModeText}</p>
+                  <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider mt-1">👤 {user?.email}</p>
+                </div>
+                <div className={`px-2.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap flex-shrink-0 ${
+                  syncStatus === 'ready' ? 'bg-emerald-600 text-emerald-100' :
+                  syncStatus === 'syncing' ? 'bg-amber-600 text-amber-100 animate-pulse' :
+                  syncStatus === 'error' ? 'bg-red-600 text-red-100' :
+                  'bg-slate-700 text-slate-300'
+                }`}>
+                  {syncStatus === 'ready' && '✅ 已同步'}
+                  {syncStatus === 'syncing' && '⏳ 同步中'}
+                  {syncStatus === 'error' && '❌ 失败'}
+                  {syncStatus === 'offline' && '⚠️ 离线'}
+                </div>
+              </div>
             </div>
             
             {/* 图例说明 */}
-            <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 space-y-1.5">
-              <div className="text-[8px] font-black text-slate-600 uppercase tracking-widest">图例</div>
+            <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 space-y-2">
+              <div className="text-xs font-black text-slate-700 uppercase tracking-widest">图例</div>
               
-              {/* PO状态指示器 - 两列布局 */}
-              <div className="space-y-0.5">
-                <div className="text-[7px] font-bold text-slate-500 uppercase">图例：</div>
+              {/* 图例指示器 */}
+              <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
-                    <span className="text-[7px] text-slate-600">PO到货</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                    <span className="text-xs text-slate-700 font-medium">PO到货</span>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-1.5 rounded-sm bg-emerald-500" />
-                    <span className="text-[7px] text-slate-600">有货</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-xs text-slate-700 font-medium">有货</span>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-1.5 rounded-sm bg-slate-200" />
-                    <span className="text-[7px] text-slate-600">断货</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-slate-300" />
+                    <span className="text-xs text-slate-700 font-medium">断货</span>
                   </div>
                 </div>
               </div>
             </div>
-            
+
+            {/* SKU 列表 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {dashboardData.map(item => (
                 <div 
