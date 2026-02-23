@@ -202,6 +202,7 @@ const App = () => {
   // 防止 React.StrictMode 下开发环境 effect 双触发导致“重复初始化”
   const hydratedRef = useRef(false);
   const lastRemoteItemsJSONRef = useRef('');
+  const hasPendingChangesRef = useRef(false);
 
   const transportOptions = transportModes.map(mode => {
     const iconMap = { sea: Ship, air: Plane, rail: Train };
@@ -406,8 +407,21 @@ const App = () => {
         console.log('✅ 云端数据订阅成功');
         if (docSnap.exists()) {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
-          lastRemoteItemsJSONRef.current = JSON.stringify(remoteData);
-          setSkus(remoteData);
+          const remoteJSON = JSON.stringify(remoteData);
+          
+          // 防竞态：如果本地有待发送的更改，不要用远程数据覆盖
+          if (!hasPendingChangesRef.current) {
+            // 仅当远程数据确实更新了才覆盖本地
+            if (remoteJSON !== lastRemoteItemsJSONRef.current) {
+              setSkus(remoteData);
+              lastRemoteItemsJSONRef.current = remoteJSON;
+              console.log('📥 从云端拉取新数据');
+            }
+          } else {
+            // 有待同步更改，只记录远程版本，待同步完成后再检查
+            lastRemoteItemsJSONRef.current = remoteJSON;
+            console.log('⏸️ 本地有待同步更改，跳过远程数据导入');
+          }
           // 加载云端设置
           if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
           if (docSnap.data().defaultSettings) setDefaultSettings(docSnap.data().defaultSettings);
@@ -489,9 +503,11 @@ const App = () => {
     const remoteTimer = setTimeout(async () => {
       try {
         setSyncStatus('syncing');
+        hasPendingChangesRef.current = true; // 标记有未确认的更改
         const cleanedSkus = cleanUndefinedValues(skus);
         await setDoc(docRef, { items: cleanedSkus, lastUpdated: new Date().toISOString() }, { merge: true });
         lastRemoteItemsJSONRef.current = localJSON;
+        hasPendingChangesRef.current = false; // 同步成功，清除标记
         setSyncStatus('ready');
         console.log('✅ 云端数据同步成功');
       } catch (err) {
