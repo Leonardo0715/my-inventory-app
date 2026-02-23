@@ -85,8 +85,36 @@ const DEFAULT_DATA = [
   { id: 2, name: '高周转新品 B (东南亚)', currentStock: 4000, unitCost: 0, monthlySales: Array(12).fill(800), pos: [] }
 ];
 
+const MONTH_LABELS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+function createEmptyYearSales(defaultForecast = 0) {
+  return Array.from({ length: 12 }).map(() => ({ actual: null, forecast: defaultForecast }));
+}
+
+function normalizeSalesCell(cell, fallbackForecast = null) {
+  if (cell && typeof cell === 'object' && !Array.isArray(cell)) {
+    const actualRaw = cell.actual;
+    const forecastRaw = cell.forecast;
+    const actualNum = (actualRaw === null || actualRaw === '' || typeof actualRaw === 'undefined') ? null : Number(actualRaw);
+    const forecastNum = (forecastRaw === null || forecastRaw === '' || typeof forecastRaw === 'undefined') ? null : Number(forecastRaw);
+    return {
+      actual: Number.isFinite(actualNum) && actualNum >= 0 ? Math.floor(actualNum) : null,
+      forecast: Number.isFinite(forecastNum) && forecastNum >= 0 ? Math.floor(forecastNum) : null,
+    };
+  }
+
+  const legacyNum = Number(cell);
+  const normalizedFallback = Number(fallbackForecast);
+  const fallback = Number.isFinite(normalizedFallback) && normalizedFallback >= 0 ? Math.floor(normalizedFallback) : null;
+  return {
+    actual: null,
+    forecast: Number.isFinite(legacyNum) && legacyNum >= 0 ? Math.floor(legacyNum) : fallback,
+  };
+}
+
 function sanitizeSkus(items) {
   const safeArr = Array.isArray(items) ? items : [];
+  const currentYear = String(new Date().getFullYear());
   return safeArr
     .filter(Boolean)
     .map((sku, idx) => {
@@ -97,6 +125,18 @@ function sanitizeSkus(items) {
       const unitCost = Number.isFinite(unitCostRaw) && unitCostRaw >= 0 ? unitCostRaw : 0;
       const monthlySalesRaw = Array.isArray(sku.monthlySales) ? sku.monthlySales : [];
       const monthlySales = Array.from({ length: 12 }).map((_, i) => Number(monthlySalesRaw[i] ?? 0));
+
+      const salesByYearRaw = (sku.salesByYear && typeof sku.salesByYear === 'object' && !Array.isArray(sku.salesByYear)) ? sku.salesByYear : {};
+      const salesByYear = {};
+      Object.keys(salesByYearRaw).forEach((yearKey) => {
+        const yearArr = Array.isArray(salesByYearRaw[yearKey]) ? salesByYearRaw[yearKey] : [];
+        salesByYear[String(yearKey)] = Array.from({ length: 12 }).map((_, i) => normalizeSalesCell(yearArr[i]));
+      });
+
+      if (!salesByYear[currentYear]) {
+        salesByYear[currentYear] = Array.from({ length: 12 }).map((_, i) => normalizeSalesCell(undefined, monthlySales[i] ?? 0));
+      }
+
       const posRaw = Array.isArray(sku.pos) ? sku.pos : [];
       const pos = posRaw.filter(Boolean).map((po) => ({
         id: Number.isFinite(Number(po.id)) ? Number(po.id) : Date.now(),
@@ -112,7 +152,7 @@ function sanitizeSkus(items) {
         leg3Days: Number(po.leg3Days ?? 0),
         status: ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].includes(po.status) ? po.status : 'ordered',
       }));
-      return { id, name, currentStock, unitCost, monthlySales, pos };
+      return { id, name, currentStock, unitCost, monthlySales, salesByYear, pos };
     });
 }
 
@@ -141,6 +181,7 @@ function saveLocalMemory(key, payload) {
 const App = () => {
   // --- 状态管理 ---
   const [viewMode, setViewMode] = useState('detail'); 
+  const [salesSelectedYear, setSalesSelectedYear] = useState(new Date().getFullYear());
   const [selectedSkuId, setSelectedSkuId] = useState(null);
   const [skus, setSkus] = useState([]);
   const [user, setUser] = useState(null);
@@ -363,7 +404,7 @@ const App = () => {
         setSkus(localSkus);
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-      if (local.viewMode === 'detail' || local.viewMode === 'list') setViewMode(local.viewMode);
+      if (['detail', 'dashboard', 'sales'].includes(local.viewMode)) setViewMode(local.viewMode);
       // 加载本地设置
       if (local.warningDays) setWarningDays(local.warningDays);
       if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
@@ -544,19 +585,124 @@ const App = () => {
   // --- 5. 业务操作 ---
   const activeSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || (skus[0]?.id))) || null, [skus, selectedSkuId]);
 
+  const salesYearOptions = useMemo(() => {
+    const yearSet = new Set([String(new Date().getFullYear())]);
+    skus.forEach(sku => {
+      Object.keys(sku.salesByYear || {}).forEach(y => yearSet.add(String(y)));
+    });
+    return Array.from(yearSet).map(y => Number(y)).filter(Number.isFinite).sort((a, b) => a - b);
+  }, [skus]);
+
+  const activeSalesSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || skus[0]?.id)) || null, [skus, selectedSkuId]);
+
+  useEffect(() => {
+    if (salesYearOptions.length === 0) return;
+    if (!salesYearOptions.includes(Number(salesSelectedYear))) {
+      setSalesSelectedYear(salesYearOptions[salesYearOptions.length - 1]);
+    }
+  }, [salesYearOptions, salesSelectedYear]);
+
   const updateSku = (id, field, value) => {
     setSkus(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
+  };
+
+  const getMonthlySalesForForecast = (sku, baseDate = new Date()) => {
+    if (!sku) return Array(12).fill(0);
+    const yearKey = String(baseDate.getFullYear());
+    const monthIdxNow = baseDate.getMonth();
+    const yearCells = sku.salesByYear?.[yearKey];
+
+    if (!Array.isArray(yearCells)) {
+      return (sku.monthlySales || Array(12).fill(0)).map(v => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 ? n : 0;
+      });
+    }
+
+    return Array.from({ length: 12 }).map((_, monthIdx) => {
+      const cell = normalizeSalesCell(yearCells[monthIdx]);
+      if (monthIdx < monthIdxNow) {
+        return Number.isFinite(Number(cell.actual)) ? Number(cell.actual) : 0;
+      }
+      return Number.isFinite(Number(cell.forecast)) ? Number(cell.forecast) : 0;
+    });
+  };
+
+  const setSalesCellValue = (skuId, year, monthIdx, field, rawValue) => {
+    const yearKey = String(year);
+    setSkus(prev => prev.map(sku => {
+      if (sku.id !== skuId) return sku;
+
+      if (rawValue !== '' && rawValue !== null && rawValue !== undefined) {
+        const num = Number(rawValue);
+        if (!Number.isFinite(num) || num < 0) {
+          setWarning('请输入非负数字，或留空为未填');
+          return sku;
+        }
+      }
+
+      const nextValue = (rawValue === '' || rawValue === null || typeof rawValue === 'undefined') ? null : Math.floor(Number(rawValue));
+      const currentYear = String(new Date().getFullYear());
+      const salesByYear = { ...(sku.salesByYear || {}) };
+      const baseYearCells = Array.isArray(salesByYear[yearKey]) ? salesByYear[yearKey] : createEmptyYearSales(null);
+      const yearCells = Array.from({ length: 12 }).map((_, idx) => normalizeSalesCell(baseYearCells[idx]));
+      yearCells[monthIdx] = {
+        ...yearCells[monthIdx],
+        [field]: nextValue,
+      };
+      salesByYear[yearKey] = yearCells;
+
+      let monthlySales = sku.monthlySales || Array(12).fill(0);
+      if (yearKey === currentYear) {
+        monthlySales = getMonthlySalesForForecast({ ...sku, salesByYear }, new Date());
+      }
+
+      return { ...sku, salesByYear, monthlySales };
+    }));
+  };
+
+  const createNextSalesYear = () => {
+    const yearSet = new Set([String(new Date().getFullYear())]);
+    skus.forEach(sku => {
+      Object.keys(sku.salesByYear || {}).forEach(y => yearSet.add(String(y)));
+    });
+    const maxYear = Math.max(...Array.from(yearSet).map(y => Number(y)).filter(Number.isFinite));
+    const nextYear = maxYear + 1;
+    const prevYearKey = String(nextYear - 1);
+    const nextYearKey = String(nextYear);
+
+    setSkus(prev => prev.map(sku => {
+      const salesByYear = { ...(sku.salesByYear || {}) };
+      if (Array.isArray(salesByYear[nextYearKey])) return sku;
+
+      const prevCells = Array.isArray(salesByYear[prevYearKey]) ? salesByYear[prevYearKey] : createEmptyYearSales(null);
+      salesByYear[nextYearKey] = Array.from({ length: 12 }).map((_, idx) => {
+        const prevCell = normalizeSalesCell(prevCells[idx]);
+        return {
+          actual: null,
+          forecast: Number.isFinite(Number(prevCell.forecast)) ? Number(prevCell.forecast) : null,
+        };
+      });
+
+      return { ...sku, salesByYear };
+    }));
+
+    setSalesSelectedYear(nextYear);
   };
 
   // 添加新 SKU
   const addSku = () => {
     const newId = Math.max(...skus.map(s => s.id), 0) + 1;
+    const currentYear = String(new Date().getFullYear());
     const newSku = {
       id: newId,
       name: `新建商品 ${newId}`,
       currentStock: 0,
       unitCost: 0,
       monthlySales: Array(12).fill(0),
+      salesByYear: {
+        [currentYear]: createEmptyYearSales(0),
+      },
       pos: []
     };
     setSkus(prev => [...prev, newSku]);
@@ -578,7 +724,17 @@ const App = () => {
     for (let i = 0; i < remainder; i++) {
       newMonthlySales[i] += 1;
     }
-    updateSku(activeSku.id, 'monthlySales', newMonthlySales);
+    const currentYear = String(new Date().getFullYear());
+    setSkus(prev => prev.map(sku => {
+      if (sku.id !== activeSku.id) return sku;
+      const salesByYear = { ...(sku.salesByYear || {}) };
+      const yearCells = Array.from({ length: 12 }).map((_, idx) => ({
+        actual: normalizeSalesCell(salesByYear[currentYear]?.[idx]).actual,
+        forecast: newMonthlySales[idx],
+      }));
+      salesByYear[currentYear] = yearCells;
+      return { ...sku, monthlySales: newMonthlySales, salesByYear };
+    }));
     setShowQuickFill(false);
     setQuickFillValue('');
   };
@@ -810,7 +966,7 @@ const App = () => {
     const data = [];
     let runningStock = Number(sku.currentStock || 0);
     const today = new Date();
-    const dailyRates = (sku.monthlySales || Array(12).fill(0)).map(m => Number(m) / 30); 
+    const dailyRates = getMonthlySalesForForecast(sku, today).map(m => Number(m) / 30);
     const monthEndStocks = [];
 
     for (let i = 0; i <= days; i++) {
@@ -1028,7 +1184,7 @@ const App = () => {
   const salesSummary = useMemo(() => {
     const totals = Array(12).fill(0);
     skus.forEach(sku => {
-      (sku.monthlySales || []).forEach((v, i) => {
+      getMonthlySalesForForecast(sku, new Date()).forEach((v, i) => {
         totals[i] += Number(v) || 0;
       });
     });
@@ -1446,6 +1602,9 @@ const App = () => {
               <button onClick={addSku} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-emerald-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                 <Plus size={18}/> 新建 SKU
               </button>
+              <button onClick={() => setViewMode('sales')} className="w-full bg-slate-800 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-slate-900 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                <Calendar size={18}/> 年度销量页
+              </button>
               <button onClick={() => setViewMode('dashboard')} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-indigo-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                 <Layout size={18}/> 开启战略全景大屏
               </button>
@@ -1522,27 +1681,14 @@ const App = () => {
                                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 font-mono text-xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
                                />
                              </div>
-                           <button onClick={() => setShowSeasonality(!showSeasonality)} className="text-xs font-black text-indigo-600 hover:underline flex items-center gap-2">{showSeasonality ? '▲ 隐藏季节性配置' : '▼ 点击展开月度销量配置'}</button>
-                           {showSeasonality && <button onClick={() => setShowQuickFill(true)} className="text-xs font-black text-emerald-600 hover:text-emerald-700">⚡ 快速填充</button>}
-                           {showSeasonality && activeSku && (
-                             <div className="grid grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 animate-in slide-in-from-top-2">
-                               {(activeSku.monthlySales || Array(12).fill(0)).map((v, i) => (
-                                 <div key={i}>
-                                   <label className="text-[10px] text-slate-400 font-bold block mb-2">{i+1}月</label>
-                                   <input
-                                     type="number"
-                                     value={v}
-                                     onChange={e => {
-                                       const n = [...(activeSku.monthlySales || Array(12).fill(0))];
-                                       n[i] = clampNonNegativeInt(e.target.value, '月度销量');
-                                       updateSku(activeSku.id, 'monthlySales', n);
-                                     }}
-                                     className="w-full text-sm p-2.5 border rounded-lg font-bold"
-                                   />
-                                 </div>
-                               ))}
-                             </div>
-                           )}
+                           <div className="flex items-center gap-3">
+                             <button
+                               onClick={() => setViewMode('sales')}
+                               className="text-xs font-black text-indigo-600 hover:text-indigo-700"
+                             >
+                               📊 进入年度销量统计与预估页
+                             </button>
+                           </div>
                         </div>
                      </div>
 
@@ -1919,6 +2065,201 @@ const App = () => {
             </main>
           </div>
         </>
+      ) : viewMode === 'sales' ? (
+        <div className="flex-1 flex flex-col p-6 bg-slate-50 min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">年度销量统计与预估</h1>
+              <p className="text-xs text-slate-500 font-bold mt-1">过去月份未填按 0 入模 · 缺失值显示为“未填”</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setViewMode('detail')}
+                className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100"
+              >
+                返回指挥中心
+              </button>
+              <button
+                onClick={() => setViewMode('dashboard')}
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700"
+              >
+                战略全景大屏
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 mb-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-black text-slate-500 uppercase tracking-wider">年份</span>
+              <select
+                value={salesSelectedYear}
+                onChange={e => setSalesSelectedYear(Number(e.target.value))}
+                className="px-3 py-2 rounded-lg border border-slate-300 text-sm font-bold text-slate-700"
+              >
+                {salesYearOptions.map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+              <button
+                onClick={createNextSalesYear}
+                className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-black hover:bg-emerald-700"
+              >
+                + 新年份（复制上一年预估）
+              </button>
+            </div>
+            <button
+              onClick={() => setShowQuickFill(true)}
+              className="px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-black hover:bg-indigo-100"
+            >
+              ⚡ 快速填充当前 SKU 预测
+            </button>
+          </div>
+
+          <div className="flex-1 min-h-0 grid grid-cols-[280px_1fr] gap-6">
+            <div className="bg-white border border-slate-200 rounded-2xl p-3 overflow-y-auto">
+              <div className="text-[11px] font-black text-slate-500 uppercase tracking-wider px-2 pb-2">SKU 列表</div>
+              <div className="space-y-2">
+                {skus.map(sku => {
+                  const selected = (selectedSkuId || skus[0]?.id) === sku.id;
+                  return (
+                    <button
+                      key={sku.id}
+                      onClick={() => setSelectedSkuId(sku.id)}
+                      className={`w-full text-left rounded-xl border px-3 py-2 transition-colors ${selected ? 'bg-indigo-50 border-indigo-300' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                    >
+                      <div className="text-sm font-black text-slate-800 truncate">{sku.name}</div>
+                      <div className="text-[10px] font-bold text-slate-500 mt-1">ID: {sku.id}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 overflow-hidden flex flex-col min-h-0">
+              {!activeSalesSku ? (
+                <div className="text-sm text-slate-400 font-bold">暂无 SKU 数据</div>
+              ) : (
+                (() => {
+                  const yearKey = String(salesSelectedYear);
+                  const rawCells = activeSalesSku.salesByYear?.[yearKey] || createEmptyYearSales(null);
+                  const yearCells = Array.from({ length: 12 }).map((_, i) => normalizeSalesCell(rawCells[i]));
+                  const now = new Date();
+                  const nowYear = now.getFullYear();
+                  const nowMonth = now.getMonth();
+                  const isCurrentYear = Number(salesSelectedYear) === nowYear;
+
+                  const pastActualTotal = yearCells.reduce((sum, cell, idx) => {
+                    const isPast = !isCurrentYear || idx < nowMonth;
+                    if (!isPast) return sum;
+                    return sum + (Number.isFinite(Number(cell.actual)) ? Number(cell.actual) : 0);
+                  }, 0);
+
+                  const futureForecastTotal = yearCells.reduce((sum, cell, idx) => {
+                    const isFuture = !isCurrentYear ? false : idx >= nowMonth;
+                    if (!isFuture) return sum;
+                    return sum + (Number.isFinite(Number(cell.forecast)) ? Number(cell.forecast) : 0);
+                  }, 0);
+
+                  const yearProjectionTotal = yearCells.reduce((sum, cell, idx) => {
+                    const useActual = !isCurrentYear || idx < nowMonth;
+                    if (useActual) {
+                      return sum + (Number.isFinite(Number(cell.actual)) ? Number(cell.actual) : 0);
+                    }
+                    return sum + (Number.isFinite(Number(cell.forecast)) ? Number(cell.forecast) : 0);
+                  }, 0);
+
+                  const missingPastCount = yearCells.filter((cell, idx) => (!isCurrentYear || idx < nowMonth) && !Number.isFinite(Number(cell.actual))).length;
+                  const missingFutureCount = yearCells.filter((cell, idx) => isCurrentYear && idx >= nowMonth && !Number.isFinite(Number(cell.forecast))).length;
+
+                  return (
+                    <>
+                      <div className="mb-4 flex items-center justify-between">
+                        <div>
+                          <h3 className="text-lg font-black text-slate-800">{activeSalesSku.name}</h3>
+                          <p className="text-[11px] text-slate-500 font-bold">{salesSelectedYear} 年月度销量台账（实际 + 预测）</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[11px] text-slate-500 font-bold">过去未填按 0 计入推演</div>
+                          <div className="text-[11px] text-slate-500 font-bold">未来未填保持“未填”</div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-3 mb-4">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="text-[10px] font-black text-slate-500 uppercase">已发生累计</div>
+                          <div className="text-xl font-black text-slate-800">{Math.round(pastActualTotal).toLocaleString()}</div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="text-[10px] font-black text-slate-500 uppercase">未来预测累计</div>
+                          <div className="text-xl font-black text-indigo-700">{Math.round(futureForecastTotal).toLocaleString()}</div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="text-[10px] font-black text-slate-500 uppercase">全年合计（推演口径）</div>
+                          <div className="text-xl font-black text-emerald-700">{Math.round(yearProjectionTotal).toLocaleString()}</div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="text-[10px] font-black text-slate-500 uppercase">未填</div>
+                          <div className="text-sm font-black text-amber-700">历史 {missingPastCount} · 未来 {missingFutureCount}</div>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-xl">
+                        <table className="w-full text-left border-collapse min-w-[760px]">
+                          <thead className="sticky top-0 bg-slate-50 z-10">
+                            <tr className="text-[11px] uppercase tracking-wider text-slate-500">
+                              <th className="p-3 font-black">月份</th>
+                              <th className="p-3 font-black text-center">实际销量</th>
+                              <th className="p-3 font-black text-center">预测销量</th>
+                              <th className="p-3 font-black text-center">推演采用值</th>
+                              <th className="p-3 font-black text-center">状态</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {yearCells.map((cell, idx) => {
+                              const isPast = !isCurrentYear || idx < nowMonth;
+                              const actualValue = Number.isFinite(Number(cell.actual)) ? Number(cell.actual) : null;
+                              const forecastValue = Number.isFinite(Number(cell.forecast)) ? Number(cell.forecast) : null;
+                              const usedValue = isPast ? (actualValue ?? 0) : (forecastValue ?? 0);
+                              const statusText = isPast
+                                ? (actualValue === null ? '未填（按0入模）' : '已填实际')
+                                : (forecastValue === null ? '未填' : '已填预测');
+
+                              return (
+                                <tr key={idx} className="border-t border-slate-100">
+                                  <td className="p-3 font-bold text-slate-700">{MONTH_LABELS[idx]}</td>
+                                  <td className="p-3 text-center">
+                                    <input
+                                      type="number"
+                                      value={actualValue ?? ''}
+                                      onChange={e => setSalesCellValue(activeSalesSku.id, salesSelectedYear, idx, 'actual', e.target.value)}
+                                      placeholder="未填"
+                                      className="w-28 text-center border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-bold"
+                                    />
+                                  </td>
+                                  <td className="p-3 text-center">
+                                    <input
+                                      type="number"
+                                      value={forecastValue ?? ''}
+                                      onChange={e => setSalesCellValue(activeSalesSku.id, salesSelectedYear, idx, 'forecast', e.target.value)}
+                                      placeholder="未填"
+                                      className="w-28 text-center border border-slate-300 rounded-lg px-2 py-1.5 text-sm font-bold"
+                                    />
+                                  </td>
+                                  <td className="p-3 text-center font-black text-indigo-700">{Math.round(usedValue).toLocaleString()}</td>
+                                  <td className="p-3 text-center text-xs font-bold text-slate-500">{statusText}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  );
+                })()
+              )}
+            </div>
+          </div>
+        </div>
       ) : (
         /* --- 战略全景大屏 --- */
         <div className={`flex-1 flex flex-col p-6 transition-colors overflow-hidden ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
