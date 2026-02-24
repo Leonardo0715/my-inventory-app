@@ -38,6 +38,9 @@ const firebaseConfig = {
 // 白名单配置
 const ALLOWED_EMAILS = (import.meta.env.VITE_ALLOWED_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 const isEmailAllowed = (email) => ALLOWED_EMAILS.includes(email.toLowerCase());
+const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+const DEFAULT_ADMIN_EMAILS = ADMIN_EMAILS.length > 0 ? ADMIN_EMAILS : (ALLOWED_EMAILS.length > 0 ? [ALLOWED_EMAILS[0]] : []);
+const ROLE_OPTIONS = ['admin', 'editor', 'viewer'];
 
 // 🔍 诊断：输出 Firebase 配置状态
 console.log('🔍 Firebase 配置诊断：');
@@ -110,6 +113,64 @@ function normalizeSalesCell(cell, fallbackForecast = null) {
     actual: null,
     forecast: Number.isFinite(legacyNum) && legacyNum >= 0 ? Math.floor(legacyNum) : fallback,
   };
+}
+
+function sanitizeOfflineInventoryItems(items) {
+  const safeArr = Array.isArray(items) ? items : [];
+  return safeArr
+    .filter(Boolean)
+    .map((item, idx) => {
+      const id = Number.isFinite(Number(item.id)) ? Number(item.id) : Date.now() + idx;
+      const name = String(item.name ?? `线下品项${idx + 1}`).trim();
+      const currentStock = Math.max(0, Number(item.currentStock ?? 0) || 0);
+      const inboundTotal = Math.max(0, Number(item.inboundTotal ?? 0) || 0);
+      const outboundTotal = Math.max(0, Number(item.outboundTotal ?? 0) || 0);
+      const lastOutboundAccount = String(item.lastOutboundAccount ?? '');
+      const remark = String(item.remark ?? '');
+      const updatedAt = String(item.updatedAt ?? '');
+      return { id, name, currentStock, inboundTotal, outboundTotal, lastOutboundAccount, remark, updatedAt };
+    })
+    .filter(item => item.name.length > 0);
+}
+
+function sanitizeOfflineInventoryLogs(logs) {
+  const safeArr = Array.isArray(logs) ? logs : [];
+  return safeArr
+    .filter(Boolean)
+    .map((log, idx) => {
+      const id = Number.isFinite(Number(log.id)) ? Number(log.id) : Date.now() + idx;
+      const itemId = Number.isFinite(Number(log.itemId)) ? Number(log.itemId) : null;
+      const itemName = String(log.itemName ?? '');
+      const type = log.type === 'out' ? 'out' : 'in';
+      const qty = Math.max(0, Number(log.qty ?? 0) || 0);
+      const account = String(log.account ?? '');
+      const remark = String(log.remark ?? '');
+      const operator = String(log.operator ?? '');
+      const happenedAt = String(log.happenedAt ?? new Date().toISOString());
+      return { id, itemId, itemName, type, qty, account, remark, operator, happenedAt };
+    })
+    .filter(log => log.itemName && log.qty > 0);
+}
+
+function sanitizeDeleteApprovals(approvals) {
+  const safeArr = Array.isArray(approvals) ? approvals : [];
+  const allowedStatus = ['pending', 'approved', 'rejected'];
+  const allowedType = ['sku', 'offline_sku', 'po'];
+  return safeArr
+    .filter(Boolean)
+    .map((item, idx) => {
+      const id = Number.isFinite(Number(item.id)) ? Number(item.id) : Date.now() + idx;
+      const status = allowedStatus.includes(item.status) ? item.status : 'pending';
+      const actionType = allowedType.includes(item.actionType) ? item.actionType : 'sku';
+      const entityName = String(item.entityName ?? '');
+      const payload = (item.payload && typeof item.payload === 'object' && !Array.isArray(item.payload)) ? item.payload : {};
+      const requestedBy = String(item.requestedBy ?? '');
+      const requestedAt = String(item.requestedAt ?? new Date().toISOString());
+      const reviewedBy = String(item.reviewedBy ?? '');
+      const reviewedAt = String(item.reviewedAt ?? '');
+      return { id, status, actionType, entityName, payload, requestedBy, requestedAt, reviewedBy, reviewedAt };
+    })
+    .sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
 }
 
 function sanitizeSkus(items) {
@@ -212,6 +273,21 @@ const App = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showQuickFill, setShowQuickFill] = useState(false);
   const [quickFillValue, setQuickFillValue] = useState('');
+  const [offlineInventoryItems, setOfflineInventoryItems] = useState([]);
+  const [offlineInventoryLogs, setOfflineInventoryLogs] = useState([]);
+  const [offlineItemName, setOfflineItemName] = useState('');
+  const [offlineItemStock, setOfflineItemStock] = useState('');
+  const [offlineItemRemark, setOfflineItemRemark] = useState('');
+  const [offlineTxItemId, setOfflineTxItemId] = useState('');
+  const [offlineTxType, setOfflineTxType] = useState('in');
+  const [offlineTxQty, setOfflineTxQty] = useState('');
+  const [offlineTxRemark, setOfflineTxRemark] = useState('');
+  const [offlineSelectedItemId, setOfflineSelectedItemId] = useState(null);
+  const [offlineOverviewQuery, setOfflineOverviewQuery] = useState('');
+  const [deleteApprovals, setDeleteApprovals] = useState([]);
+  const [userRoles, setUserRoles] = useState({});
+  const [roleTargetEmail, setRoleTargetEmail] = useState('');
+  const [roleTargetValue, setRoleTargetValue] = useState('viewer');
   const [poSortBy, setPoSortBy] = useState('orderDate'); // 'orderDate' 或 'arrivalDate'
   const [poOverviewFilter, setPoOverviewFilter] = useState('all'); // 'all' | 'followup'
   const [expandedPoId, setExpandedPoId] = useState(null); // 展开的采购单ID
@@ -260,6 +336,24 @@ const App = () => {
         ? `离线模式（缺少：${missingFirebaseEnv.join(', ')}）`
         : '离线模式（仅本地记忆）')
     : (syncStatus === 'ready' ? '✅ 云端同步已启用（多人共享）' : (syncStatus === 'syncing' ? '⏳ 正在同步中...' : '⚠️ 云端连接异常：已使用本地数据'));
+
+  const currentUserEmail = (user?.email || '').toLowerCase();
+  const currentUserRole = useMemo(() => {
+    if (!currentUserEmail) return 'viewer';
+    if (DEFAULT_ADMIN_EMAILS.includes(currentUserEmail)) return 'admin';
+    const mapped = userRoles[currentUserEmail];
+    if (ROLE_OPTIONS.includes(mapped)) return mapped;
+    return 'editor';
+  }, [currentUserEmail, userRoles]);
+
+  const canEditData = currentUserRole === 'admin' || currentUserRole === 'editor';
+  const canManagePermissions = currentUserRole === 'admin';
+
+  const ensureEditPermission = () => {
+    if (canEditData) return true;
+    setWarning('当前账号为只读权限，无法修改数据');
+    return false;
+  };
 
   // 生成 PO 号的函数
   const generatePONumber = (skuId) => {
@@ -404,11 +498,15 @@ const App = () => {
         setSkus(localSkus);
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-      if (['detail', 'dashboard', 'sales'].includes(local.viewMode)) setViewMode(local.viewMode);
+      if (['detail', 'dashboard', 'sales', 'offline', 'approval'].includes(local.viewMode)) setViewMode(local.viewMode);
       // 加载本地设置
       if (local.warningDays) setWarningDays(local.warningDays);
       if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
       if (local.transportModes) setTransportModes(local.transportModes);
+      if (local.userRoles && typeof local.userRoles === 'object') setUserRoles(local.userRoles);
+      if (Array.isArray(local.offlineInventoryItems)) setOfflineInventoryItems(sanitizeOfflineInventoryItems(local.offlineInventoryItems));
+      if (Array.isArray(local.offlineInventoryLogs)) setOfflineInventoryLogs(sanitizeOfflineInventoryLogs(local.offlineInventoryLogs));
+      if (Array.isArray(local.deleteApprovals)) setDeleteApprovals(sanitizeDeleteApprovals(local.deleteApprovals));
       console.log('✅ 从本地恢复成功');
     } else {
       const initialData = sanitizeSkus(DEFAULT_DATA);
@@ -448,13 +546,24 @@ const App = () => {
         console.log('✅ 云端数据订阅成功');
         if (docSnap.exists()) {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
-          const remoteJSON = JSON.stringify(remoteData);
+          const remoteOfflineItems = sanitizeOfflineInventoryItems(docSnap.data().offlineInventoryItems || []);
+          const remoteOfflineLogs = sanitizeOfflineInventoryLogs(docSnap.data().offlineInventoryLogs || []);
+          const remoteDeleteApprovals = sanitizeDeleteApprovals(docSnap.data().deleteApprovals || []);
+          const remoteJSON = JSON.stringify({
+            items: remoteData,
+            offlineInventoryItems: remoteOfflineItems,
+            offlineInventoryLogs: remoteOfflineLogs,
+            deleteApprovals: remoteDeleteApprovals,
+          });
           
           // 防竞态：如果本地有待发送的更改，不要用远程数据覆盖
           if (!hasPendingChangesRef.current) {
             // 仅当远程数据确实更新了才覆盖本地
             if (remoteJSON !== lastRemoteItemsJSONRef.current) {
               setSkus(remoteData);
+              setOfflineInventoryItems(remoteOfflineItems);
+              setOfflineInventoryLogs(remoteOfflineLogs);
+              setDeleteApprovals(remoteDeleteApprovals);
               lastRemoteItemsJSONRef.current = remoteJSON;
               console.log('📥 从云端拉取新数据');
             }
@@ -467,6 +576,7 @@ const App = () => {
           if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
           if (docSnap.data().defaultSettings) setDefaultSettings(docSnap.data().defaultSettings);
           if (docSnap.data().transportModes) setTransportModes(docSnap.data().transportModes);
+          if (docSnap.data().userRoles && typeof docSnap.data().userRoles === 'object') setUserRoles(docSnap.data().userRoles);
           if (remoteData.length > 0) {
             setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
           }
@@ -480,9 +590,32 @@ const App = () => {
           setSkus(bootstrap);
           setSelectedSkuId(bootstrap[0]?.id ?? 1);
           // 主动写入，确保云端 doc 被创建
-          setDoc(docRef, { items: bootstrap, warningDays, defaultSettings, transportModes, lastUpdated: new Date().toISOString() }, { merge: true })
+          const bootstrapOfflineItems = (() => {
+            const local2 = loadLocalMemory(localKey);
+            if (local2 && Array.isArray(local2.offlineInventoryItems)) return sanitizeOfflineInventoryItems(local2.offlineInventoryItems);
+            return [];
+          })();
+          const bootstrapOfflineLogs = (() => {
+            const local2 = loadLocalMemory(localKey);
+            if (local2 && Array.isArray(local2.offlineInventoryLogs)) return sanitizeOfflineInventoryLogs(local2.offlineInventoryLogs);
+            return [];
+          })();
+          const bootstrapDeleteApprovals = (() => {
+            const local2 = loadLocalMemory(localKey);
+            if (local2 && Array.isArray(local2.deleteApprovals)) return sanitizeDeleteApprovals(local2.deleteApprovals);
+            return [];
+          })();
+          setOfflineInventoryItems(bootstrapOfflineItems);
+          setOfflineInventoryLogs(bootstrapOfflineLogs);
+          setDeleteApprovals(bootstrapDeleteApprovals);
+          setDoc(docRef, { items: bootstrap, offlineInventoryItems: bootstrapOfflineItems, offlineInventoryLogs: bootstrapOfflineLogs, deleteApprovals: bootstrapDeleteApprovals, warningDays, defaultSettings, transportModes, userRoles, lastUpdated: new Date().toISOString() }, { merge: true })
             .then(() => { 
-              lastRemoteItemsJSONRef.current = JSON.stringify(bootstrap);
+              lastRemoteItemsJSONRef.current = JSON.stringify({
+                items: bootstrap,
+                offlineInventoryItems: bootstrapOfflineItems,
+                offlineInventoryLogs: bootstrapOfflineLogs,
+                deleteApprovals: bootstrapDeleteApprovals,
+              });
               console.log('✅ 云端初始化成功');
             })
             .catch((e) => {
@@ -512,10 +645,10 @@ const App = () => {
   useEffect(() => {
     if (skus.length === 0) return;
     const timer = setTimeout(() => {
-      saveLocalMemory(localKey, { skus, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, savedAt: Date.now() });
+      saveLocalMemory(localKey, { skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, savedAt: Date.now() });
     }, 300);
     return () => clearTimeout(timer);
-  }, [skus, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, localKey]);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, localKey]);
 
   // --- 4.2 云端自动存档（多人共享） ---
   // 清理对象中的 undefined 值（Firestore 不支持 undefined）
@@ -538,7 +671,7 @@ const App = () => {
     if (!isInitialLoadDone || skus.length === 0) return;
 
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
-    const localJSON = JSON.stringify(skus);
+    const localJSON = JSON.stringify({ items: skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals });
     if (localJSON === lastRemoteItemsJSONRef.current) return;
 
     const remoteTimer = setTimeout(async () => {
@@ -546,7 +679,10 @@ const App = () => {
         setSyncStatus('syncing');
         hasPendingChangesRef.current = true; // 标记有未确认的更改
         const cleanedSkus = cleanUndefinedValues(skus);
-        await setDoc(docRef, { items: cleanedSkus, lastUpdated: new Date().toISOString() }, { merge: true });
+        const cleanedOfflineItems = cleanUndefinedValues(offlineInventoryItems);
+        const cleanedOfflineLogs = cleanUndefinedValues(offlineInventoryLogs);
+        const cleanedDeleteApprovals = cleanUndefinedValues(deleteApprovals);
+        await setDoc(docRef, { items: cleanedSkus, offlineInventoryItems: cleanedOfflineItems, offlineInventoryLogs: cleanedOfflineLogs, deleteApprovals: cleanedDeleteApprovals, lastUpdated: new Date().toISOString() }, { merge: true });
         lastRemoteItemsJSONRef.current = localJSON;
         hasPendingChangesRef.current = false; // 同步成功，清除标记
         setSyncStatus('ready');
@@ -558,11 +694,11 @@ const App = () => {
     }, 1000);
 
     return () => clearTimeout(remoteTimer);
-  }, [skus, user, isInitialLoadDone, appId, db]);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals, user, isInitialLoadDone, appId, db]);
 
   // --- 4.3 设置自动云端保存 ---
   useEffect(() => {
-    if (!db || !user || !isInitialLoadDone) return;
+    if (!db || !user || !isInitialLoadDone || !canManagePermissions) return;
     
     const settingsTimer = setTimeout(async () => {
       try {
@@ -571,6 +707,7 @@ const App = () => {
           warningDays, 
           defaultSettings, 
           transportModes,
+          userRoles,
           lastUpdated: new Date().toISOString() 
         }, { merge: true });
         console.log('✅ 设置自动同步到云端');
@@ -580,7 +717,7 @@ const App = () => {
     }, 1500);
 
     return () => clearTimeout(settingsTimer);
-  }, [warningDays, defaultSettings, transportModes, user, isInitialLoadDone, appId, db]);
+  }, [warningDays, defaultSettings, transportModes, userRoles, user, isInitialLoadDone, appId, db, canManagePermissions]);
 
   // --- 5. 业务操作 ---
   const activeSku = useMemo(() => skus.find(s => s.id === (selectedSkuId || (skus[0]?.id))) || null, [skus, selectedSkuId]);
@@ -602,9 +739,293 @@ const App = () => {
     }
   }, [salesYearOptions, salesSelectedYear]);
 
+  const upsertUserRole = (email, role) => {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      setWarning('请输入账号邮箱');
+      return;
+    }
+    if (!ROLE_OPTIONS.includes(role)) {
+      setWarning('权限类型无效');
+      return;
+    }
+    setUserRoles(prev => ({ ...prev, [normalizedEmail]: role }));
+    setRoleTargetEmail('');
+    setRoleTargetValue('viewer');
+  };
+
+  const removeUserRole = (email) => {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    setUserRoles(prev => {
+      const next = { ...prev };
+      delete next[normalizedEmail];
+      return next;
+    });
+  };
+
+  const getDeleteActionLabel = (actionType) => {
+    if (actionType === 'offline_sku') return '删除线下SKU';
+    if (actionType === 'po') return '删除采购单';
+    return '删除SKU';
+  };
+
+  const requestDeleteApproval = (actionType, entityName, payload) => {
+    if (!ensureEditPermission()) return false;
+    const requester = String(user?.email || '').trim().toLowerCase();
+    if (!requester) {
+      setWarning('当前未获取到登录账号，无法提交删除审批');
+      return false;
+    }
+    const now = new Date().toISOString();
+    const request = {
+      id: Date.now(),
+      status: 'pending',
+      actionType,
+      entityName: String(entityName || '').trim(),
+      payload: payload && typeof payload === 'object' ? payload : {},
+      requestedBy: requester,
+      requestedAt: now,
+      reviewedBy: '',
+      reviewedAt: '',
+    };
+    setDeleteApprovals(prev => [request, ...prev]);
+    setWarning(`已提交删除审批：${getDeleteActionLabel(actionType)}，等待管理员处理`);
+    return true;
+  };
+
+  const executeApprovedDelete = (approval) => {
+    if (!approval || !approval.payload) return;
+    if (approval.actionType === 'sku') {
+      const skuId = Number(approval.payload.skuId);
+      if (!Number.isFinite(skuId)) return;
+      setSkus(prev => {
+        const next = prev.filter(s => s.id !== skuId);
+        setSelectedSkuId(curr => (curr === skuId ? (next[0]?.id ?? null) : curr));
+        return next;
+      });
+      return;
+    }
+    if (approval.actionType === 'offline_sku') {
+      const itemId = Number(approval.payload.itemId);
+      if (!Number.isFinite(itemId)) return;
+      setOfflineInventoryItems(prev => prev.filter(item => item.id !== itemId));
+      setOfflineInventoryLogs(prev => prev.filter(log => Number(log.itemId) !== itemId));
+      return;
+    }
+    if (approval.actionType === 'po') {
+      const skuId = Number(approval.payload.skuId);
+      const poId = Number(approval.payload.poId);
+      if (!Number.isFinite(skuId) || !Number.isFinite(poId)) return;
+      setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).filter(p => p.id !== poId) } : s));
+    }
+  };
+
+  const reviewDeleteApproval = (approvalId, decision) => {
+    if (!canManagePermissions) {
+      setWarning('仅管理员可审批删除申请');
+      return;
+    }
+    const target = deleteApprovals.find(item => item.id === approvalId);
+    if (!target || target.status !== 'pending') return;
+
+    if (decision === 'approved') {
+      executeApprovedDelete(target);
+    }
+
+    const now = new Date().toISOString();
+    const reviewer = String(user?.email || '').trim().toLowerCase();
+    setDeleteApprovals(prev => prev.map(item => {
+      if (item.id !== approvalId) return item;
+      return {
+        ...item,
+        status: decision === 'approved' ? 'approved' : 'rejected',
+        reviewedBy: reviewer,
+        reviewedAt: now,
+      };
+    }));
+    setWarning(decision === 'approved' ? '审批通过，删除操作已执行' : '审批已驳回');
+  };
+
   const updateSku = (id, field, value) => {
+    if (!ensureEditPermission()) return;
     setSkus(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
+
+  const addOfflineInventoryItem = () => {
+    if (!ensureEditPermission()) return;
+    const name = String(offlineItemName || '').trim();
+    const initialStock = Math.max(0, Number(offlineItemStock || 0) || 0);
+    if (!name) {
+      setWarning('请输入线下库存品项名称');
+      return;
+    }
+    if (offlineInventoryItems.some(item => item.name === name)) {
+      setWarning('该线下品项已存在，请直接做入库/出库');
+      return;
+    }
+    const now = new Date().toISOString();
+    const newItem = {
+      id: Date.now(),
+      name,
+      currentStock: initialStock,
+      inboundTotal: initialStock,
+      outboundTotal: 0,
+      lastOutboundAccount: '',
+      remark: String(offlineItemRemark || '').trim(),
+      updatedAt: now,
+    };
+    setOfflineInventoryItems(prev => [newItem, ...prev]);
+    if (initialStock > 0) {
+      setOfflineInventoryLogs(prev => [{
+        id: Date.now() + 1,
+        itemId: newItem.id,
+        itemName: newItem.name,
+        type: 'in',
+        qty: initialStock,
+        account: '系统初始化',
+        remark: '初始化库存',
+        operator: user?.email || '',
+        happenedAt: now,
+      }, ...prev]);
+    }
+    setOfflineItemName('');
+    setOfflineItemStock('');
+    setOfflineItemRemark('');
+    if (!offlineTxItemId) setOfflineTxItemId(String(newItem.id));
+    if (!offlineSelectedItemId) setOfflineSelectedItemId(newItem.id);
+  };
+
+  const deleteOfflineInventoryItem = (itemId) => {
+    const targetId = Number(itemId);
+    const targetItem = offlineInventoryItems.find(item => item.id === targetId);
+    if (!targetItem) return;
+    const ok = window.confirm(`确定提交审批删除线下SKU「${targetItem.name}」吗？审批通过后将同时删除该SKU全部出入库记录。`);
+    if (!ok) return;
+    requestDeleteApproval('offline_sku', targetItem.name, { itemId: targetId });
+  };
+
+  const recordOfflineInventoryTx = () => {
+    if (!ensureEditPermission()) return;
+    const itemIdNum = Number(offlineTxItemId);
+    const qty = Math.max(0, Number(offlineTxQty || 0) || 0);
+    const txType = offlineTxType === 'out' ? 'out' : 'in';
+    const account = String(user?.email || '').trim();
+    const remark = String(offlineTxRemark || '').trim();
+    if (!Number.isFinite(itemIdNum)) {
+      setWarning('请选择线下库存品项');
+      return;
+    }
+    if (qty <= 0) {
+      setWarning('请输入有效数量');
+      return;
+    }
+    if (!account) {
+      setWarning('当前未获取到登录账号，请重新登录后再操作');
+      return;
+    }
+    const targetItem = offlineInventoryItems.find(item => item.id === itemIdNum);
+    if (!targetItem) {
+      setWarning('线下库存品项不存在');
+      return;
+    }
+    if (txType === 'out' && qty > Number(targetItem.currentStock || 0)) {
+      setWarning('出库数量超过当前库存');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setOfflineInventoryItems(prev => prev.map(item => {
+      if (item.id !== itemIdNum) return item;
+      const currentStock = Number(item.currentStock || 0);
+      const inboundTotal = Number(item.inboundTotal || 0);
+      const outboundTotal = Number(item.outboundTotal || 0);
+      if (txType === 'in') {
+        return {
+          ...item,
+          currentStock: currentStock + qty,
+          inboundTotal: inboundTotal + qty,
+          remark: remark || item.remark,
+          updatedAt: now,
+        };
+      }
+      return {
+        ...item,
+        currentStock: currentStock - qty,
+        outboundTotal: outboundTotal + qty,
+        lastOutboundAccount: account,
+        remark: remark || item.remark,
+        updatedAt: now,
+      };
+    }));
+
+    setOfflineInventoryLogs(prev => [{
+      id: Date.now(),
+      itemId: targetItem.id,
+      itemName: targetItem.name,
+      type: txType,
+      qty,
+      account,
+      remark,
+      operator: user?.email || '',
+      happenedAt: now,
+    }, ...prev]);
+
+    setOfflineTxQty('');
+    setOfflineTxRemark('');
+  };
+
+  const offlineInventorySummary = useMemo(() => {
+    const itemCount = offlineInventoryItems.length;
+    const currentTotal = offlineInventoryItems.reduce((sum, item) => sum + Number(item.currentStock || 0), 0);
+    const inboundTotal = offlineInventoryItems.reduce((sum, item) => sum + Number(item.inboundTotal || 0), 0);
+    const outboundTotal = offlineInventoryItems.reduce((sum, item) => sum + Number(item.outboundTotal || 0), 0);
+    return { itemCount, currentTotal, inboundTotal, outboundTotal };
+  }, [offlineInventoryItems]);
+
+  const offlineSelectedItem = useMemo(() => {
+    if (!Number.isFinite(Number(offlineSelectedItemId))) return null;
+    return offlineInventoryItems.find(item => item.id === Number(offlineSelectedItemId)) || null;
+  }, [offlineInventoryItems, offlineSelectedItemId]);
+
+  const selectedOfflineLogs = useMemo(() => {
+    if (!offlineSelectedItem) return [];
+    return offlineInventoryLogs.filter(log => Number(log.itemId) === Number(offlineSelectedItem.id));
+  }, [offlineInventoryLogs, offlineSelectedItem]);
+
+  const offlineOutboundSummaryLogs = useMemo(() => {
+    return offlineInventoryLogs.filter(log => log.type === 'out');
+  }, [offlineInventoryLogs]);
+
+  const pendingDeleteApprovals = useMemo(() => deleteApprovals.filter(item => item.status === 'pending'), [deleteApprovals]);
+  const reviewedDeleteApprovals = useMemo(() => deleteApprovals.filter(item => item.status !== 'pending'), [deleteApprovals]);
+
+  const filteredOfflineInventoryItems = useMemo(() => {
+    const query = String(offlineOverviewQuery || '').trim().toLowerCase();
+    if (!query) return offlineInventoryItems;
+    return offlineInventoryItems.filter(item => String(item.name || '').toLowerCase().includes(query));
+  }, [offlineInventoryItems, offlineOverviewQuery]);
+
+  useEffect(() => {
+    if (offlineInventoryItems.length === 0) {
+      setOfflineTxItemId('');
+      return;
+    }
+    const hasTxItem = offlineInventoryItems.some(item => String(item.id) === String(offlineTxItemId));
+    if (!hasTxItem) {
+      setOfflineTxItemId(String(offlineInventoryItems[0].id));
+    }
+  }, [offlineInventoryItems, offlineTxItemId]);
+
+  useEffect(() => {
+    if (offlineInventoryItems.length === 0) {
+      setOfflineSelectedItemId(null);
+      return;
+    }
+    const hasSelected = offlineInventoryItems.some(item => item.id === Number(offlineSelectedItemId));
+    if (!hasSelected) {
+      setOfflineSelectedItemId(offlineInventoryItems[0].id);
+    }
+  }, [offlineInventoryItems, offlineSelectedItemId]);
 
   const getMonthlySalesForForecast = (sku, baseDate = new Date()) => {
     if (!sku) return Array(12).fill(0);
@@ -629,6 +1050,7 @@ const App = () => {
   };
 
   const setSalesCellValue = (skuId, year, monthIdx, field, rawValue) => {
+    if (!ensureEditPermission()) return;
     const yearKey = String(year);
     setSkus(prev => prev.map(sku => {
       if (sku.id !== skuId) return sku;
@@ -662,6 +1084,7 @@ const App = () => {
   };
 
   const createNextSalesYear = () => {
+    if (!ensureEditPermission()) return;
     const yearSet = new Set([String(new Date().getFullYear())]);
     skus.forEach(sku => {
       Object.keys(sku.salesByYear || {}).forEach(y => yearSet.add(String(y)));
@@ -692,6 +1115,7 @@ const App = () => {
 
   // 添加新 SKU
   const addSku = () => {
+    if (!ensureEditPermission()) return;
     const newId = Math.max(...skus.map(s => s.id), 0) + 1;
     const currentYear = String(new Date().getFullYear());
     const newSku = {
@@ -711,6 +1135,7 @@ const App = () => {
 
   // 快速填充月度销量
   const quickFillMonthlySales = () => {
+    if (!ensureEditPermission()) return;
     if (!quickFillValue || !activeSku) return;
     const value = Number(quickFillValue);
     if (!Number.isFinite(value) || value < 0) {
@@ -743,18 +1168,13 @@ const App = () => {
   const deleteSku = (skuId) => {
     const skuToDelete = skus.find(s => s.id === skuId);
     if (!skuToDelete) return;
-    if (confirm(`确定要删除 "${skuToDelete.name}" 吗？此操作不可撤销。`)) {
-      const newSkus = skus.filter(s => s.id !== skuId);
-      setSkus(newSkus);
-      // 如果删除的是当前选中的，切换到第一个
-      if (selectedSkuId === skuId) {
-        setSelectedSkuId(newSkus[0]?.id ?? null);
-      }
-    }
+    if (!confirm(`确定提交审批删除 "${skuToDelete.name}" 吗？审批通过后才会执行删除。`)) return;
+    requestDeleteApproval('sku', skuToDelete.name, { skuId: Number(skuId) });
   };
 
   // SKU 复制
   const duplicateSku = (skuId) => {
+    if (!ensureEditPermission()) return;
     const skuToCopy = skus.find(s => s.id === skuId);
     if (!skuToCopy) return;
     const newId = Math.max(...skus.map(s => s.id), 0) + 1;
@@ -783,6 +1203,7 @@ const App = () => {
   };
 
   const handleDrop = (e, targetSkuId) => {
+    if (!ensureEditPermission()) return;
     e.preventDefault();
     if (draggedSkuId === targetSkuId || !draggedSkuId) return;
     
@@ -805,6 +1226,7 @@ const App = () => {
 
   // 采购单系统
   const addPO = (skuId) => {
+    if (!ensureEditPermission()) return;
     setSkus(prev => prev.map(s => {
       if (s.id === skuId) {
         const poNumber = generatePONumber(skuId);
@@ -815,11 +1237,19 @@ const App = () => {
     }));
   };
   const updatePO = (skuId, poId, field, value) => {
+    if (!ensureEditPermission()) return;
     setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => p.id === poId ? { ...p, [field]: value } : p) } : s));
   };
-  const removePO = (skuId, poId) => setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).filter(p => p.id !== poId) } : s));
+  const removePO = (skuId, poId) => {
+    const sku = skus.find(s => s.id === skuId);
+    const po = sku?.pos?.find(p => p.id === poId);
+    if (!po) return;
+    if (!confirm(`确定提交审批删除采购单「${po.poNumber}」吗？审批通过后才会执行删除。`)) return;
+    requestDeleteApproval('po', `${sku?.name || 'SKU'} / ${po.poNumber}`, { skuId: Number(skuId), poId: Number(poId), poNumber: String(po.poNumber || '') });
+  };
   
   const duplicatePO = (skuId, poId) => {
+    if (!ensureEditPermission()) return;
     const sku = skus.find(s => s.id === skuId);
     if (!sku) return;
     const po = sku.pos?.find(p => p.id === poId);
@@ -880,6 +1310,7 @@ const App = () => {
   };
 
   const importPOsFromJSON = () => {
+    if (!ensureEditPermission()) return;
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
@@ -915,6 +1346,7 @@ const App = () => {
   };
 
   const importPOsFromCSV = () => {
+    if (!ensureEditPermission()) return;
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.csv';
@@ -1444,7 +1876,7 @@ const App = () => {
   );
 
   return (
-    <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm overflow-hidden">
+    <div className={`h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col font-sans text-slate-800 text-sm ${viewMode === 'dashboard' ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}>
       {warning && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-100 border border-amber-300 text-amber-800 px-6 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 animate-in slide-in-from-top-2">
           <AlertCircle size={14} className="text-amber-500" />
@@ -1454,7 +1886,7 @@ const App = () => {
           </button>
         </div>
       )}
-      <div className="flex-1 flex bg-slate-100 overflow-hidden">
+      <div className={viewMode === 'dashboard' ? 'bg-slate-100' : 'flex-1 flex bg-slate-100 min-h-0 overflow-hidden'}>
       {viewMode === 'detail' ? (
         <>
           {/* 侧边栏 */}
@@ -1464,7 +1896,17 @@ const App = () => {
               <div className="flex justify-between items-center">
                 <h2 className="text-lg font-black flex items-center gap-2 tracking-tight"><BarChart3 size={24}/> 智策中心</h2>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setShowSettings(true)} className="p-1.5 hover:bg-indigo-800 rounded-lg transition-colors" title="打开设置"><Settings size={18} className="text-slate-300 hover:text-white"/></button>
+                  <button
+                    onClick={() => {
+                      if (!canManagePermissions) {
+                        setWarning('仅管理员可打开系统设置');
+                        return;
+                      }
+                      setShowSettings(true);
+                    }}
+                    className="p-1.5 hover:bg-indigo-800 rounded-lg transition-colors"
+                    title="打开设置"
+                  ><Settings size={18} className="text-slate-300 hover:text-white"/></button>
                   <button onClick={handleLogout} className="p-1.5 hover:bg-red-800 rounded-lg transition-colors" title="登出"><LogOut size={18} className="text-slate-300 hover:text-red-300"/></button>
                 </div>
               </div>
@@ -1474,6 +1916,7 @@ const App = () => {
                 <div>
                   <p className="text-xs text-indigo-300 font-bold uppercase tracking-widest italic">{memoryModeText}</p>
                   <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider mt-1 break-words">👤 {user?.email}</p>
+                  <p className="text-[10px] text-indigo-300 font-black mt-1">权限：{currentUserRole === 'admin' ? '管理员' : currentUserRole === 'editor' ? '编辑' : '只读'}</p>
                 </div>
                 <div className={`px-2.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap inline-block ${
                   syncStatus === 'ready' ? 'bg-emerald-600 text-emerald-100' :
@@ -1604,6 +2047,26 @@ const App = () => {
               </button>
               <button onClick={() => setViewMode('sales')} className="w-full bg-slate-800 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-slate-900 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                 <Calendar size={18}/> 年度销量页
+              </button>
+              <button onClick={() => setViewMode('offline')} className="w-full bg-amber-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-amber-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                <Factory size={18}/> 线下库存页
+              </button>
+              <button
+                onClick={() => {
+                  if (!canManagePermissions) {
+                    setWarning('仅管理员可进入审批中心');
+                    return;
+                  }
+                  setViewMode('approval');
+                }}
+                className="w-full bg-rose-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-rose-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase relative"
+              >
+                <Lock size={18}/> 审批中心
+                {pendingDeleteApprovals.length > 0 && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 min-w-5 h-5 px-1 rounded-full bg-white text-rose-700 text-[10px] font-black flex items-center justify-center">
+                    {pendingDeleteApprovals.length > 99 ? '99+' : pendingDeleteApprovals.length}
+                  </span>
+                )}
               </button>
               <button onClick={() => setViewMode('dashboard')} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-indigo-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                 <Layout size={18}/> 开启战略全景大屏
@@ -2260,9 +2723,344 @@ const App = () => {
             </div>
           </div>
         </div>
+      ) : viewMode === 'offline' ? (
+        <div className="flex-1 flex flex-col p-6 bg-slate-50 min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">线下库存管理中心</h1>
+              <p className="text-xs text-slate-500 font-bold mt-1">管理消费者退回库存等不可回保税仓货物，独立于保税仓库存系统</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
+              <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-4 gap-4 mb-5">
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">线下品项数</div>
+              <div className="text-2xl font-black text-slate-800">{offlineInventorySummary.itemCount}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">现有库存总数</div>
+              <div className="text-2xl font-black text-indigo-700">{Math.round(offlineInventorySummary.currentTotal).toLocaleString()}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">累计入库</div>
+              <div className="text-2xl font-black text-emerald-700">{Math.round(offlineInventorySummary.inboundTotal).toLocaleString()}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">累计出库</div>
+              <div className="text-2xl font-black text-rose-700">{Math.round(offlineInventorySummary.outboundTotal).toLocaleString()}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[360px_1fr] gap-6 flex-1 min-h-0">
+            <div className="space-y-4 overflow-y-auto pr-1">
+              <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                <h3 className="text-sm font-black text-slate-800 mb-3">新增线下库存品项</h3>
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    value={offlineItemName}
+                    onChange={e => setOfflineItemName(e.target.value)}
+                    placeholder="品项名称（如：退货A批次）"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                  />
+                  <input
+                    type="number"
+                    value={offlineItemStock}
+                    onChange={e => setOfflineItemStock(e.target.value)}
+                    placeholder="现有库存（初始化）"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                  />
+                  <textarea
+                    value={offlineItemRemark}
+                    onChange={e => setOfflineItemRemark(e.target.value)}
+                    placeholder="备注（可选）"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium h-20 resize-none"
+                  />
+                  <button
+                    onClick={addOfflineInventoryItem}
+                    className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-black text-xs hover:bg-indigo-700"
+                  >
+                    + 新增品项
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                <h3 className="text-sm font-black text-slate-800 mb-3">入库 / 出库登记</h3>
+                <div className="space-y-3">
+                  <select
+                    value={offlineTxItemId}
+                    onChange={e => {
+                      setOfflineTxItemId(e.target.value);
+                      setOfflineSelectedItemId(Number(e.target.value));
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                  >
+                    {offlineInventoryItems.length === 0 ? (
+                      <option value="">请先新增线下库存品项</option>
+                    ) : (
+                      offlineInventoryItems.map(item => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))
+                    )}
+                  </select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setOfflineTxType('in')}
+                      className={`py-2 rounded-lg text-xs font-black border ${offlineTxType === 'in' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-300'}`}
+                    >入库</button>
+                    <button
+                      onClick={() => setOfflineTxType('out')}
+                      className={`py-2 rounded-lg text-xs font-black border ${offlineTxType === 'out' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-slate-600 border-slate-300'}`}
+                    >出库</button>
+                  </div>
+                  <input
+                    type="number"
+                    value={offlineTxQty}
+                    onChange={e => setOfflineTxQty(e.target.value)}
+                    placeholder="数量"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={String(user?.email || '')}
+                    readOnly
+                    className="w-full px-3 py-2 border border-slate-200 bg-slate-100 rounded-lg text-sm font-semibold text-slate-600"
+                  />
+                  <textarea
+                    value={offlineTxRemark}
+                    onChange={e => setOfflineTxRemark(e.target.value)}
+                    placeholder="备注"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium h-20 resize-none"
+                  />
+                  <button
+                    onClick={recordOfflineInventoryTx}
+                    className="w-full bg-amber-600 text-white py-2.5 rounded-lg font-black text-xs hover:bg-amber-700"
+                  >
+                    记录本次{offlineTxType === 'in' ? '入库' : '出库'}（账号：{String(user?.email || '未登录')})
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-rows-[auto_1fr] gap-4 min-h-0">
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
+                <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-black text-slate-700">线下库存总览</h3>
+                  <input
+                    type="text"
+                    value={offlineOverviewQuery}
+                    onChange={e => setOfflineOverviewQuery(e.target.value)}
+                    placeholder="搜索品项"
+                    className="w-56 px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium"
+                  />
+                </div>
+                <div className="overflow-auto max-h-[260px]">
+                  <table className="w-auto min-w-[420px] text-left text-xs">
+                    <colgroup>
+                      <col style={{ width: '240px' }} />
+                      <col style={{ width: '140px' }} />
+                      <col style={{ width: '96px' }} />
+                    </colgroup>
+                    <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase">
+                      <tr>
+                        <th className="px-4 py-3">品项</th>
+                        <th className="px-4 py-3 text-right">现有库存</th>
+                        <th className="px-4 py-3 text-center">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {filteredOfflineInventoryItems.length === 0 ? (
+                        <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={3}>暂无线下库存品项</td></tr>
+                      ) : filteredOfflineInventoryItems.map(item => (
+                        <tr
+                          key={item.id}
+                          onClick={() => {
+                            setOfflineSelectedItemId(item.id);
+                            setOfflineTxItemId(String(item.id));
+                          }}
+                          className={`cursor-pointer hover:bg-slate-50 ${Number(offlineSelectedItemId) === Number(item.id) ? 'bg-indigo-50' : ''}`}
+                        >
+                          <td className="px-4 py-3 font-bold text-slate-700">{item.name}</td>
+                          <td className="px-4 py-3 text-right font-black text-indigo-700">{Math.round(item.currentStock).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteOfflineInventoryItem(item.id);
+                              }}
+                              disabled={!canEditData}
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                            >
+                              <Trash2 size={12} /> 删除
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col min-h-0">
+                <div className="px-4 py-3 border-b bg-slate-50">
+                  <h3 className="text-sm font-black text-slate-700">SKU 明细流水 + 全局出库汇总</h3>
+                </div>
+                <div className="flex-1 overflow-hidden grid grid-cols-2 min-h-0">
+                  <div className="border-r border-slate-200 flex flex-col min-h-0">
+                    <div className="px-4 py-2 border-b bg-slate-50/80 text-xs font-black text-slate-600">
+                      {offlineSelectedItem ? `${offlineSelectedItem.name} 的出入库记录` : '请选择 SKU 查看明细'}
+                    </div>
+                    <div className="flex-1 overflow-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase">
+                          <tr>
+                            <th className="px-4 py-3">时间</th>
+                            <th className="px-4 py-3">类型</th>
+                            <th className="px-4 py-3 text-right">数量</th>
+                            <th className="px-4 py-3">操作账号</th>
+                            <th className="px-4 py-3">备注</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {selectedOfflineLogs.length === 0 ? (
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={5}>该 SKU 暂无记录</td></tr>
+                          ) : selectedOfflineLogs.map(log => (
+                            <tr key={`selected-${log.id}`} className="hover:bg-slate-50">
+                              <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-1 rounded text-[10px] font-black ${log.type === 'in' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                  {log.type === 'in' ? '入库' : '出库'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right font-black">{Math.round(log.qty).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
+                              <td className="px-4 py-3 text-slate-500">{log.remark || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col min-h-0">
+                    <div className="px-4 py-2 border-b bg-slate-50/80 text-xs font-black text-slate-600">全局出库汇总记录</div>
+                    <div className="flex-1 overflow-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase">
+                          <tr>
+                            <th className="px-4 py-3">时间</th>
+                            <th className="px-4 py-3">SKU</th>
+                            <th className="px-4 py-3 text-right">出库数量</th>
+                            <th className="px-4 py-3">操作账号</th>
+                            <th className="px-4 py-3">备注</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {offlineOutboundSummaryLogs.length === 0 ? (
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={5}>暂无出库汇总记录</td></tr>
+                          ) : offlineOutboundSummaryLogs.map(log => (
+                            <tr key={`out-${log.id}`} className="hover:bg-slate-50">
+                              <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
+                              <td className="px-4 py-3 font-bold text-slate-700">{log.itemName}</td>
+                              <td className="px-4 py-3 text-right font-black text-rose-700">{Math.round(log.qty).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
+                              <td className="px-4 py-3 text-slate-500">{log.remark || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : viewMode === 'approval' ? (
+        <div className="flex-1 flex flex-col p-6 bg-slate-50 min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">删除审批中心</h1>
+              <p className="text-xs text-slate-500 font-bold mt-1">所有删除操作需经管理员审批后执行</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
+              <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>
+            </div>
+          </div>
+
+          {!canManagePermissions ? (
+            <div className="flex-1 bg-white border border-slate-200 rounded-2xl flex items-center justify-center">
+              <div className="text-center">
+                <div className="text-lg font-black text-slate-800">仅管理员可审批</div>
+                <div className="text-xs text-slate-500 font-bold mt-2">当前账号仅可查看业务页面，无法进入审批中心</div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-6 flex-1 min-h-0">
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col min-h-0">
+                <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
+                  <h3 className="text-sm font-black text-slate-700">待审批</h3>
+                  <span className="text-[10px] font-black text-amber-700 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">{pendingDeleteApprovals.length} 条</span>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {pendingDeleteApprovals.length === 0 ? (
+                    <div className="text-xs text-slate-400 italic p-2">暂无待审批记录</div>
+                  ) : pendingDeleteApprovals.map(item => (
+                    <div key={item.id} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 space-y-1">
+                      <div className="text-xs font-black text-slate-700 truncate">{getDeleteActionLabel(item.actionType)} · {item.entityName || '-'}</div>
+                      <div className="text-[10px] text-slate-500 font-medium">申请人：{item.requestedBy || '-'} · {new Date(item.requestedAt).toLocaleString()}</div>
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={() => reviewDeleteApproval(item.id, 'approved')}
+                          className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 transition-colors text-[10px] font-black"
+                        >
+                          通过并删除
+                        </button>
+                        <button
+                          onClick={() => reviewDeleteApproval(item.id, 'rejected')}
+                          className="px-2 py-1 bg-rose-100 text-rose-700 rounded hover:bg-rose-200 transition-colors text-[10px] font-black"
+                        >
+                          驳回
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col min-h-0">
+                <div className="px-4 py-3 border-b bg-slate-50">
+                  <h3 className="text-sm font-black text-slate-700">已处理记录</h3>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {reviewedDeleteApprovals.length === 0 ? (
+                    <div className="text-xs text-slate-400 italic p-2">暂无已处理记录</div>
+                  ) : reviewedDeleteApprovals.map(item => (
+                    <div key={item.id} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs font-black text-slate-700 truncate">{getDeleteActionLabel(item.actionType)} · {item.entityName || '-'}</div>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${item.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                          {item.status === 'approved' ? '已通过' : '已驳回'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-medium">申请：{item.requestedBy || '-'} · {new Date(item.requestedAt).toLocaleString()}</div>
+                      <div className="text-[10px] text-slate-400 font-medium">审批：{item.reviewedBy || '-'} · {item.reviewedAt ? new Date(item.reviewedAt).toLocaleString() : '-'}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         /* --- 战略全景大屏 --- */
-        <div className={`flex-1 flex flex-col p-6 transition-colors overflow-y-auto ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
+        <div className={`flex-1 flex flex-col p-6 transition-colors ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
           <div className="flex justify-between items-start mb-6 flex-shrink-0">
             <div className="flex items-start gap-8">
               <div className="flex items-center gap-6">
@@ -2697,13 +3495,13 @@ const App = () => {
                 <table className="w-full text-left border-collapse min-w-[1200px]">
                   <thead className={`sticky top-0 z-20 ${dashboardTheme === 'dark' ? 'bg-slate-900 shadow-md shadow-slate-900/10' : 'bg-white shadow-md shadow-slate-200/50'}`}>
                       <tr>
-                        <th className={`py-4 pl-8 w-64 text-left text-xs font-bold uppercase tracking-wider ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>商品信息</th>
-                        <th className={`py-4 text-center text-xs font-bold uppercase tracking-wider w-32 ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>实时库存</th>
-                        <th className={`py-4 text-center text-xs font-bold uppercase tracking-wider w-32 ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>断货预测</th>
-                        <th className={`py-4 text-center text-xs font-bold uppercase tracking-wider w-40 ${dashboardTheme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>下单建议</th>
+                        <th className={`py-4 pl-8 w-64 text-left text-sm font-bold uppercase tracking-wider ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>商品信息</th>
+                        <th className={`py-4 text-center text-sm font-bold uppercase tracking-wider w-32 ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>实时库存</th>
+                        <th className={`py-4 text-center text-sm font-bold uppercase tracking-wider w-32 ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>断货预测</th>
+                        <th className={`py-4 text-center text-sm font-bold uppercase tracking-wider w-40 ${dashboardTheme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>下单建议</th>
                         {Array.from({length: 12}).map((_, i) => {
                           const d = new Date(); d.setMonth(d.getMonth() + i);
-                          return <th key={i} className={`py-4 text-center text-[10px] font-bold uppercase tracking-wider w-20 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>{(d.getMonth() + 1)}月</th>
+                          return <th key={i} className={`py-4 text-center text-xs font-bold uppercase tracking-wider w-20 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>{(d.getMonth() + 1)}月</th>
                         })}
                       </tr>
                   </thead>
@@ -2712,13 +3510,13 @@ const App = () => {
                       <tr key={sku.id} className={`group code-font transition-colors ${dashboardTheme === 'dark' ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
                           {/* 商品名 */}
                           <td className="py-4 pl-8">
-                            <div className={`font-bold text-sm mb-1 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>{sku.name}</div>
-                            <div className={`text-[10px] uppercase font-mono ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>#{String(sku.id).padStart(3, '0')}</div>
+                            <div className={`font-bold text-base mb-1 ${dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>{sku.name}</div>
+                            <div className={`text-xs uppercase font-mono ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>#{String(sku.id).padStart(3, '0')}</div>
                           </td>
                           
                           {/* 实时库存 */}
                           <td className="py-4 text-center">
-                              <span className={`font-mono font-bold text-base ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
+                              <span className={`font-mono font-bold text-lg ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
                                 {sku.currentStock?.toLocaleString()}
                               </span>
                           </td>
@@ -2726,11 +3524,11 @@ const App = () => {
                           {/* 断货预测日 */}
                           <td className="py-4 text-center">
                               {sku.finalStockOutDate !== '安全' ? (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-bold bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 animate-pulse">
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 animate-pulse">
                                   {sku.finalStockOutDate}
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
                                   安全
                                 </span>
                               )}
@@ -2740,13 +3538,13 @@ const App = () => {
                           <td className={`py-4 px-4 text-center border-x ${dashboardTheme === 'dark' ? 'bg-indigo-900/5 border-indigo-900/10' : 'bg-indigo-50/30 border-indigo-50'}`}>
                             {sku.finalStockOutDate !== '安全' ? (
                               <div className="flex flex-col items-center gap-1">
-                                <span className={`text-[10px] uppercase font-bold ${dashboardTheme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>截止: {sku.orderDateStr}</span>
+                                <span className={`text-xs uppercase font-bold ${dashboardTheme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>截止: {sku.orderDateStr}</span>
                                 <span className={`font-mono font-bold text-lg ${sku.urgency === 'critical' ? 'text-red-500' : (dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800')}`}>
                                   {sku.suggestQty.toFixed(0)}
                                 </span>
                               </div>
                             ) : (
-                              <span className="text-xs text-slate-400 dark:text-slate-600 font-medium italic">无需操作</span>
+                              <span className="text-sm text-slate-400 dark:text-slate-600 font-medium italic">无需操作</span>
                             )}
                           </td>
                           
@@ -2764,7 +3562,7 @@ const App = () => {
                             }
                             
                             return (
-                              <td key={i} className={`p-1 text-center font-mono text-xs ${cellBg || cellText}`}>
+                              <td key={i} className={`p-1 text-center font-mono text-sm ${cellBg || cellText}`}>
                                 {m.stock <= 0 ? (
                                   <span className="font-bold">×</span>
                                 ) : (
@@ -2837,6 +3635,73 @@ const App = () => {
                   >
                     <Plus size={14}/> 新建运输方式
                   </button>
+                </div>
+              </div>
+
+              {/* 账号权限管理 */}
+              <div className="space-y-4">
+                <h4 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                  <Lock size={20} className="text-indigo-600"/> 账号权限管理（管理员）
+                </h4>
+                <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <div className="grid grid-cols-[1fr_120px_auto] gap-2 items-center">
+                    <input
+                      type="email"
+                      value={roleTargetEmail}
+                      onChange={e => setRoleTargetEmail(e.target.value)}
+                      placeholder="输入账号邮箱，如 user@orynda.cn"
+                      className="px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-indigo-500 font-medium text-sm"
+                    />
+                    <select
+                      value={roleTargetValue}
+                      onChange={e => setRoleTargetValue(e.target.value)}
+                      className="px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-indigo-500 font-medium text-sm"
+                    >
+                      <option value="admin">管理员</option>
+                      <option value="editor">编辑</option>
+                      <option value="viewer">只读</option>
+                    </select>
+                    <button
+                      onClick={() => upsertUserRole(roleTargetEmail, roleTargetValue)}
+                      className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-xs font-bold"
+                    >
+                      添加/更新
+                    </button>
+                  </div>
+
+                  <div className="text-[10px] text-slate-500 font-medium">
+                    说明：`admin` 可管理权限与系统设置；`editor` 可编辑业务数据；`viewer` 仅查看。
+                  </div>
+
+                  <div className="max-h-52 overflow-y-auto space-y-2 pt-1">
+                    {Object.keys(userRoles).length === 0 ? (
+                      <div className="text-xs text-slate-400 italic">暂未设置自定义权限，未配置账号默认按编辑权限登录（管理员邮箱除外）。</div>
+                    ) : (
+                      Object.entries(userRoles)
+                        .sort((a, b) => a[0].localeCompare(b[0]))
+                        .map(([email, role]) => (
+                          <div key={email} className="grid grid-cols-[1fr_120px_auto] gap-2 items-center bg-white border border-slate-200 rounded-lg px-3 py-2">
+                            <div className="text-xs font-medium text-slate-700 truncate">{email}</div>
+                            <select
+                              value={role}
+                              onChange={e => upsertUserRole(email, e.target.value)}
+                              className="px-2 py-1 border border-slate-300 rounded text-xs font-medium"
+                            >
+                              <option value="admin">管理员</option>
+                              <option value="editor">编辑</option>
+                              <option value="viewer">只读</option>
+                            </select>
+                            <button
+                              onClick={() => removeUserRole(email)}
+                              className="px-2 py-1 bg-red-100 text-red-600 rounded hover:bg-red-200 transition-colors text-xs font-bold"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        ))
+                    )}
+                  </div>
+
                 </div>
               </div>
 
@@ -2917,13 +3782,20 @@ const App = () => {
               <div className="flex gap-3 pt-6 border-t border-slate-200">
                 <button
                   onClick={() => {
+                    if (!canManagePermissions) {
+                      setWarning('仅管理员可保存系统设置');
+                      setTimeout(() => setWarning(''), 2000);
+                      setShowSettings(false);
+                      return;
+                    }
                     // 保存设置到本地存储
                     const localData = loadLocalMemory(localKey) || {};
                     saveLocalMemory(localKey, {
                       ...localData,
                       warningDays,
                       defaultSettings,
-                      transportModes
+                      transportModes,
+                      userRoles
                     });
                     
                     // 保存设置到 Firestore
@@ -2934,6 +3806,7 @@ const App = () => {
                           warningDays, 
                           defaultSettings, 
                           transportModes,
+                          userRoles,
                           lastUpdated: new Date().toISOString() 
                         }, { merge: true })
                           .then(() => {
