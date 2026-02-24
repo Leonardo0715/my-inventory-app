@@ -348,6 +348,7 @@ const App = () => {
 
   const canEditData = currentUserRole === 'admin' || currentUserRole === 'editor';
   const canManagePermissions = currentUserRole === 'admin';
+  const canApproveDeletion = currentUserRole === 'admin';
 
   const ensureEditPermission = () => {
     if (canEditData) return true;
@@ -453,12 +454,16 @@ const App = () => {
     } catch (err) {
       console.error('❌ 登录失败:', err.code, err.message);
       
-      if (err.code === 'auth/user-not-found') {
+      if (err.code === 'auth/invalid-credential') {
+        setLoginError('❌ 账号不存在或密码错误，请检查后重试');
+      } else if (err.code === 'auth/user-not-found') {
         setLoginError('❌ 该邮箱未注册，请联系管理员');
       } else if (err.code === 'auth/wrong-password') {
         setLoginError('❌ 密码错误');
       } else if (err.code === 'auth/invalid-email') {
         setLoginError('❌ 邮箱格式不正确');
+      } else if (err.code === 'auth/user-disabled') {
+        setLoginError('❌ 该账号已被禁用，请联系管理员');
       } else if (err.code === 'auth/too-many-requests') {
         setLoginError('❌ 登录尝试次数过多，请稍后再试');
       } else {
@@ -821,7 +826,7 @@ const App = () => {
   };
 
   const reviewDeleteApproval = (approvalId, decision) => {
-    if (!canManagePermissions) {
+    if (!canApproveDeletion) {
       setWarning('仅管理员可审批删除申请');
       return;
     }
@@ -2053,7 +2058,7 @@ const App = () => {
               </button>
               <button
                 onClick={() => {
-                  if (!canManagePermissions) {
+                  if (!canApproveDeletion) {
                     setWarning('仅管理员可进入审批中心');
                     return;
                   }
@@ -2994,7 +2999,7 @@ const App = () => {
             </div>
           </div>
 
-          {!canManagePermissions ? (
+          {!canApproveDeletion ? (
             <div className="flex-1 bg-white border border-slate-200 rounded-2xl flex items-center justify-center">
               <div className="text-center">
                 <div className="text-lg font-black text-slate-800">仅管理员可审批</div>
@@ -3018,12 +3023,14 @@ const App = () => {
                       <div className="flex items-center gap-2 pt-1">
                         <button
                           onClick={() => reviewDeleteApproval(item.id, 'approved')}
+                          disabled={!canApproveDeletion}
                           className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 transition-colors text-[10px] font-black"
                         >
                           通过并删除
                         </button>
                         <button
                           onClick={() => reviewDeleteApproval(item.id, 'rejected')}
+                          disabled={!canApproveDeletion}
                           className="px-2 py-1 bg-rose-100 text-rose-700 rounded hover:bg-rose-200 transition-colors text-[10px] font-black"
                         >
                           驳回
