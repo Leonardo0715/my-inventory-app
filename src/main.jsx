@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+﻿import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import { 
   TrendingDown, Clock, Plus, AlertTriangle, BarChart3, 
@@ -142,20 +142,106 @@ function sanitizeOfflineInventoryLogs(logs) {
       const itemId = Number.isFinite(Number(log.itemId)) ? Number(log.itemId) : null;
       const itemName = String(log.itemName ?? '');
       const type = log.type === 'out' ? 'out' : 'in';
+      const purpose = log.purpose === 'sample' ? 'sample' : (log.purpose === 'restock' ? 'restock' : 'normal');
       const qty = Math.max(0, Number(log.qty ?? 0) || 0);
       const account = String(log.account ?? '');
+      const customerId = Number.isFinite(Number(log.customerId)) ? Number(log.customerId) : null;
+      const customerName = String(log.customerName ?? '');
+      const customerPlatform = String(log.customerPlatform ?? '');
+      const customerIdentity = String(log.customerIdentity ?? '');
+      const customerPhone = String(log.customerPhone ?? '');
+      const profileId = Number.isFinite(Number(log.profileId)) ? Number(log.profileId) : null;
+      const profileLabel = String(log.profileLabel ?? '');
+      const profileReceiver = String(log.profileReceiver ?? '');
+      const profilePhone = String(log.profilePhone ?? '');
+      const profileAddress = String(log.profileAddress ?? '');
+      const trackingNo = String(log.trackingNo ?? '');
       const remark = String(log.remark ?? '');
       const operator = String(log.operator ?? '');
       const happenedAt = String(log.happenedAt ?? new Date().toISOString());
-      return { id, itemId, itemName, type, qty, account, remark, operator, happenedAt };
+      return { id, itemId, itemName, type, purpose, qty, account, customerId, customerName, customerPlatform, customerIdentity, customerPhone, profileId, profileLabel, profileReceiver, profilePhone, profileAddress, trackingNo, remark, operator, happenedAt };
     })
     .filter(log => log.itemName && log.qty > 0);
+}
+
+function sanitizeRecipientDirectory(customers) {
+  const safeArr = Array.isArray(customers) ? customers : [];
+
+  const pickFirstText = (...values) => {
+    for (const value of values) {
+      const normalized = String(value ?? '').trim();
+      if (normalized) return normalized;
+    }
+    return '';
+  };
+
+  return safeArr
+    .filter(Boolean)
+    .map((customer, idx) => {
+      const customerId = Number.isFinite(Number(customer.id)) ? Number(customer.id) : Date.now() + idx;
+      const customerPlatform = String(customer.platform ?? '').trim();
+      const customerName = String(customer.name ?? `客户${idx + 1}`).trim();
+      const customerIdentity = String(customer.identity ?? '').trim();
+      const customerPhone = String(customer.phone ?? '').trim();
+      const customerRemark = String(customer.remark ?? '').trim();
+      const rawProfiles = Array.isArray(customer.profiles) ? customer.profiles : [];
+      const profiles = rawProfiles
+        .filter(Boolean)
+        .map((profile, pIdx) => {
+          const profileId = Number.isFinite(Number(profile.id)) ? Number(profile.id) : Date.now() + idx * 100 + pIdx;
+          const label = pickFirstText(profile.label, profile.name, profile.tag, `地址${pIdx + 1}`);
+          const receiver = pickFirstText(profile.receiver, profile.receiverName, profile.consignee, profile.contact, profile.contactName);
+          const phone = pickFirstText(profile.phone, profile.mobile, profile.tel, profile.phoneNo, profile.contactPhone);
+          const address = pickFirstText(profile.address, profile.fullAddress, profile.detailAddress, profile.addr);
+          const remark = String(profile.remark ?? '').trim();
+          const isDefault = Boolean(profile.isDefault);
+          return { id: profileId, label, receiver, phone, address, remark, isDefault };
+        })
+        .filter(profile => profile.label || profile.address || profile.receiver || profile.phone);
+
+      const legacyCustomerAddress = pickFirstText(customer.address, customer.fullAddress, customer.detailAddress, customer.addr);
+      const legacyCustomerReceiver = pickFirstText(customer.receiver, customer.receiverName, customer.consignee, customer.contact, customer.contactName, customer.name);
+      const legacyCustomerPhone = pickFirstText(customer.phone, customer.mobile, customer.tel, customer.phoneNo, customer.contactPhone);
+      const legacyCustomerLabel = pickFirstText(customer.profileLabel, customer.label, '默认地址');
+      const legacyCustomerRemark = pickFirstText(customer.profileRemark, customer.addressRemark, customer.remark);
+
+      const withLegacyProfile = (profiles.length === 0 && (legacyCustomerAddress || legacyCustomerReceiver || legacyCustomerPhone))
+        ? [{
+            id: Date.now() + idx * 1000,
+            label: legacyCustomerLabel,
+            receiver: legacyCustomerReceiver,
+            phone: legacyCustomerPhone,
+            address: legacyCustomerAddress,
+            remark: legacyCustomerRemark,
+            isDefault: true,
+          }]
+        : profiles;
+
+      const hasDefault = withLegacyProfile.some(profile => profile.isDefault);
+      const normalizedProfiles = withLegacyProfile.map((profile, pIdx) => ({
+        ...profile,
+        isDefault: hasDefault ? profile.isDefault : pIdx === 0,
+      }));
+
+      return {
+        id: customerId,
+        platform: customerPlatform,
+        name: customerName,
+        identity: customerIdentity,
+        phone: customerPhone,
+        remark: customerRemark,
+        profiles: normalizedProfiles,
+      };
+    })
+    .filter(customer => customer.name.length > 0);
 }
 
 function sanitizeDeleteApprovals(approvals) {
   const safeArr = Array.isArray(approvals) ? approvals : [];
   const allowedStatus = ['pending', 'approved', 'rejected'];
-  const allowedType = ['sku', 'offline_sku', 'po'];
+  const allowedType = ['sku', 'offline_sku', 'po', 'customer_edit', 'customer_delete', 'profile_delete'];
+  const RETENTION_DAYS = 90;
+  const cutoff = Date.now() - RETENTION_DAYS * 86400000;
   return safeArr
     .filter(Boolean)
     .map((item, idx) => {
@@ -169,6 +255,12 @@ function sanitizeDeleteApprovals(approvals) {
       const reviewedBy = String(item.reviewedBy ?? '');
       const reviewedAt = String(item.reviewedAt ?? '');
       return { id, status, actionType, entityName, payload, requestedBy, requestedAt, reviewedBy, reviewedAt };
+    })
+    // 清理已完成超过 90 天的审批记录，防止无限增长
+    .filter(item => {
+      if (item.status === 'pending') return true;
+      const ts = new Date(item.reviewedAt || item.requestedAt).getTime();
+      return ts > cutoff;
     })
     .sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
 }
@@ -275,13 +367,32 @@ const App = () => {
   const [quickFillValue, setQuickFillValue] = useState('');
   const [offlineInventoryItems, setOfflineInventoryItems] = useState([]);
   const [offlineInventoryLogs, setOfflineInventoryLogs] = useState([]);
+  const [offlineRecipientDirectory, setOfflineRecipientDirectory] = useState([]);
   const [offlineItemName, setOfflineItemName] = useState('');
   const [offlineItemStock, setOfflineItemStock] = useState('');
   const [offlineItemRemark, setOfflineItemRemark] = useState('');
+  const [offlineCustomerPlatform, setOfflineCustomerPlatform] = useState('');
+  const [offlineCustomerName, setOfflineCustomerName] = useState('');
+  const [offlineCustomerIdentity, setOfflineCustomerIdentity] = useState('');
+  const [offlineCustomerPhone, setOfflineCustomerPhone] = useState('');
+  const [offlineCustomerRemark, setOfflineCustomerRemark] = useState('');
+  const [offlineRecipientQuery, setOfflineRecipientQuery] = useState('');
+  const [offlineSelectedCustomerId, setOfflineSelectedCustomerId] = useState('');
+  const [editingCustomerModal, setEditingCustomerModal] = useState(null);
+  const [offlineProfileLabel, setOfflineProfileLabel] = useState('');
+  const [offlineProfileReceiver, setOfflineProfileReceiver] = useState('');
+  const [offlineProfilePhone, setOfflineProfilePhone] = useState('');
+  const [offlineProfileAddress, setOfflineProfileAddress] = useState('');
+  const [offlineProfileRemark, setOfflineProfileRemark] = useState('');
+  const [offlineEditingProfileId, setOfflineEditingProfileId] = useState('');
   const [offlineTxItemId, setOfflineTxItemId] = useState('');
   const [offlineTxType, setOfflineTxType] = useState('in');
+  const [offlineTxPurpose, setOfflineTxPurpose] = useState('normal');
   const [offlineTxQty, setOfflineTxQty] = useState('');
   const [offlineTxRemark, setOfflineTxRemark] = useState('');
+  const [offlineTxCustomerId, setOfflineTxCustomerId] = useState('');
+  const [offlineTxProfileId, setOfflineTxProfileId] = useState('');
+  const [offlineTxTrackingNo, setOfflineTxTrackingNo] = useState('');
   const [offlineSelectedItemId, setOfflineSelectedItemId] = useState(null);
   const [offlineOverviewQuery, setOfflineOverviewQuery] = useState('');
   const [deleteApprovals, setDeleteApprovals] = useState([]);
@@ -359,16 +470,20 @@ const App = () => {
   // 生成 PO 号的函数
   const generatePONumber = (skuId) => {
     const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    const sku = skus.find(s => s.id === skuId);
-    if (!sku || !sku.pos) return `PO-${today}-001`;
-    // 统计今天的 PO 数量
-    const todayPOs = sku.pos.filter(p => {
-      if (!p.poNumber) return false;
-      const parts = String(p.poNumber).split('-');
-      return parts[1] === today;
-    });
-    const count = String(todayPOs.length + 1).padStart(3, '0');
-    return `PO-${today}-${count}`;
+    // 搜索所有 SKU 的 PO，找到今天最大的序号，避免跨 SKU 或删除后编号重复
+    let maxSeq = 0;
+    for (const s of skus) {
+      if (!s.pos) continue;
+      for (const p of s.pos) {
+        if (!p.poNumber) continue;
+        const parts = String(p.poNumber).split('-');
+        if (parts[1] === today) {
+          const seq = parseInt(parts[2], 10);
+          if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+        }
+      }
+    }
+    return `PO-${today}-${String(maxSeq + 1).padStart(3, '0')}`;
   };
 
   const clampNonNegativeInt = (raw, fieldLabel) => {
@@ -503,7 +618,7 @@ const App = () => {
         setSkus(localSkus);
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-      if (['detail', 'dashboard', 'sales', 'offline', 'approval'].includes(local.viewMode)) setViewMode(local.viewMode);
+      if (['detail', 'dashboard', 'sales', 'offline', 'recipient-library', 'approval'].includes(local.viewMode)) setViewMode(local.viewMode);
       // 加载本地设置
       if (local.warningDays) setWarningDays(local.warningDays);
       if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
@@ -511,6 +626,7 @@ const App = () => {
       if (local.userRoles && typeof local.userRoles === 'object') setUserRoles(local.userRoles);
       if (Array.isArray(local.offlineInventoryItems)) setOfflineInventoryItems(sanitizeOfflineInventoryItems(local.offlineInventoryItems));
       if (Array.isArray(local.offlineInventoryLogs)) setOfflineInventoryLogs(sanitizeOfflineInventoryLogs(local.offlineInventoryLogs));
+      if (Array.isArray(local.offlineRecipientDirectory)) setOfflineRecipientDirectory(sanitizeRecipientDirectory(local.offlineRecipientDirectory));
       if (Array.isArray(local.deleteApprovals)) setDeleteApprovals(sanitizeDeleteApprovals(local.deleteApprovals));
       console.log('✅ 从本地恢复成功');
     } else {
@@ -553,11 +669,13 @@ const App = () => {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
           const remoteOfflineItems = sanitizeOfflineInventoryItems(docSnap.data().offlineInventoryItems || []);
           const remoteOfflineLogs = sanitizeOfflineInventoryLogs(docSnap.data().offlineInventoryLogs || []);
+          const remoteRecipientDirectory = sanitizeRecipientDirectory(docSnap.data().offlineRecipientDirectory || []);
           const remoteDeleteApprovals = sanitizeDeleteApprovals(docSnap.data().deleteApprovals || []);
           const remoteJSON = JSON.stringify({
             items: remoteData,
             offlineInventoryItems: remoteOfflineItems,
             offlineInventoryLogs: remoteOfflineLogs,
+            offlineRecipientDirectory: remoteRecipientDirectory,
             deleteApprovals: remoteDeleteApprovals,
           });
           
@@ -568,6 +686,7 @@ const App = () => {
               setSkus(remoteData);
               setOfflineInventoryItems(remoteOfflineItems);
               setOfflineInventoryLogs(remoteOfflineLogs);
+              setOfflineRecipientDirectory(remoteRecipientDirectory);
               setDeleteApprovals(remoteDeleteApprovals);
               lastRemoteItemsJSONRef.current = remoteJSON;
               console.log('📥 从云端拉取新数据');
@@ -610,15 +729,22 @@ const App = () => {
             if (local2 && Array.isArray(local2.deleteApprovals)) return sanitizeDeleteApprovals(local2.deleteApprovals);
             return [];
           })();
+          const bootstrapRecipientDirectory = (() => {
+            const local2 = loadLocalMemory(localKey);
+            if (local2 && Array.isArray(local2.offlineRecipientDirectory)) return sanitizeRecipientDirectory(local2.offlineRecipientDirectory);
+            return [];
+          })();
           setOfflineInventoryItems(bootstrapOfflineItems);
           setOfflineInventoryLogs(bootstrapOfflineLogs);
+          setOfflineRecipientDirectory(bootstrapRecipientDirectory);
           setDeleteApprovals(bootstrapDeleteApprovals);
-          setDoc(docRef, { items: bootstrap, offlineInventoryItems: bootstrapOfflineItems, offlineInventoryLogs: bootstrapOfflineLogs, deleteApprovals: bootstrapDeleteApprovals, warningDays, defaultSettings, transportModes, userRoles, lastUpdated: new Date().toISOString() }, { merge: true })
+          setDoc(docRef, { items: bootstrap, offlineInventoryItems: bootstrapOfflineItems, offlineInventoryLogs: bootstrapOfflineLogs, offlineRecipientDirectory: bootstrapRecipientDirectory, deleteApprovals: bootstrapDeleteApprovals, warningDays, defaultSettings, transportModes, userRoles, lastUpdated: new Date().toISOString() }, { merge: true })
             .then(() => { 
               lastRemoteItemsJSONRef.current = JSON.stringify({
                 items: bootstrap,
                 offlineInventoryItems: bootstrapOfflineItems,
                 offlineInventoryLogs: bootstrapOfflineLogs,
+                offlineRecipientDirectory: bootstrapRecipientDirectory,
                 deleteApprovals: bootstrapDeleteApprovals,
               });
               console.log('✅ 云端初始化成功');
@@ -650,10 +776,10 @@ const App = () => {
   useEffect(() => {
     if (skus.length === 0) return;
     const timer = setTimeout(() => {
-      saveLocalMemory(localKey, { skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, savedAt: Date.now() });
+      saveLocalMemory(localKey, { skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, savedAt: Date.now() });
     }, 300);
     return () => clearTimeout(timer);
-  }, [skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, localKey]);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, localKey]);
 
   // --- 4.2 云端自动存档（多人共享） ---
   // 清理对象中的 undefined 值（Firestore 不支持 undefined）
@@ -676,30 +802,43 @@ const App = () => {
     if (!isInitialLoadDone || skus.length === 0) return;
 
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
-    const localJSON = JSON.stringify({ items: skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals });
-    if (localJSON === lastRemoteItemsJSONRef.current) return;
+    const localJSON = JSON.stringify({ items: skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals });
+    if (localJSON === lastRemoteItemsJSONRef.current) {
+      hasPendingChangesRef.current = false;
+      return;
+    }
+
+    hasPendingChangesRef.current = true; // 立即标记，防止 onSnapshot 在防抖窗口内覆盖本地数据
 
     const remoteTimer = setTimeout(async () => {
       try {
         setSyncStatus('syncing');
-        hasPendingChangesRef.current = true; // 标记有未确认的更改
         const cleanedSkus = cleanUndefinedValues(skus);
         const cleanedOfflineItems = cleanUndefinedValues(offlineInventoryItems);
         const cleanedOfflineLogs = cleanUndefinedValues(offlineInventoryLogs);
+        const cleanedRecipientDirectory = cleanUndefinedValues(offlineRecipientDirectory);
         const cleanedDeleteApprovals = cleanUndefinedValues(deleteApprovals);
-        await setDoc(docRef, { items: cleanedSkus, offlineInventoryItems: cleanedOfflineItems, offlineInventoryLogs: cleanedOfflineLogs, deleteApprovals: cleanedDeleteApprovals, lastUpdated: new Date().toISOString() }, { merge: true });
-        lastRemoteItemsJSONRef.current = localJSON;
+        await setDoc(docRef, { items: cleanedSkus, offlineInventoryItems: cleanedOfflineItems, offlineInventoryLogs: cleanedOfflineLogs, offlineRecipientDirectory: cleanedRecipientDirectory, deleteApprovals: cleanedDeleteApprovals, lastUpdated: new Date().toISOString() }, { merge: true });
+        // 使用与 onSnapshot 一致的方式生成 JSON，防止 sanitize 差异导致多余同步
+        lastRemoteItemsJSONRef.current = JSON.stringify({
+          items: sanitizeSkus(cleanedSkus),
+          offlineInventoryItems: sanitizeOfflineInventoryItems(cleanedOfflineItems),
+          offlineInventoryLogs: sanitizeOfflineInventoryLogs(cleanedOfflineLogs),
+          offlineRecipientDirectory: sanitizeRecipientDirectory(cleanedRecipientDirectory),
+          deleteApprovals: sanitizeDeleteApprovals(cleanedDeleteApprovals),
+        });
         hasPendingChangesRef.current = false; // 同步成功，清除标记
         setSyncStatus('ready');
         console.log('✅ 云端数据同步成功');
       } catch (err) {
         console.error('❌ 自动云端存档失败:', err.code, err.message);
+        hasPendingChangesRef.current = false; // 失败时也清除标记，避免永久屏蔽远程数据
         setSyncStatus('error');
       }
     }, 1000);
 
     return () => clearTimeout(remoteTimer);
-  }, [skus, offlineInventoryItems, offlineInventoryLogs, deleteApprovals, user, isInitialLoadDone, appId, db]);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, user, isInitialLoadDone, appId, db]);
 
   // --- 4.3 设置自动云端保存 ---
   useEffect(() => {
@@ -771,6 +910,9 @@ const App = () => {
   const getDeleteActionLabel = (actionType) => {
     if (actionType === 'offline_sku') return '删除线下SKU';
     if (actionType === 'po') return '删除采购单';
+    if (actionType === 'customer_edit') return '编辑客户信息';
+    if (actionType === 'customer_delete') return '删除客户';
+    if (actionType === 'profile_delete') return '删除地址';
     return '删除SKU';
   };
 
@@ -794,7 +936,7 @@ const App = () => {
       reviewedAt: '',
     };
     setDeleteApprovals(prev => [request, ...prev]);
-    setWarning(`已提交删除审批：${getDeleteActionLabel(actionType)}，等待管理员处理`);
+    setWarning(`已提交审批：${getDeleteActionLabel(actionType)}，等待管理员处理`);
     return true;
   };
 
@@ -822,6 +964,67 @@ const App = () => {
       const poId = Number(approval.payload.poId);
       if (!Number.isFinite(skuId) || !Number.isFinite(poId)) return;
       setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).filter(p => p.id !== poId) } : s));
+      return;
+    }
+    if (approval.actionType === 'customer_edit') {
+      const { customerId, platform, name, identity, phone, remark } = approval.payload;
+      const trimmedName = String(name || '').trim();
+      const targetId = Number(customerId);
+      if (!Number.isFinite(targetId)) return;
+      if (!trimmedName) {
+        setWarning('审批执行失败：客户名称为空');
+        return;
+      }
+      const exists = offlineRecipientDirectory.some(c => c.id === targetId);
+      if (!exists) {
+        setWarning('审批执行失败：该客户已被删除，编辑无法生效');
+        return;
+      }
+      setOfflineRecipientDirectory(prev => prev.map(c => {
+        if (c.id !== targetId) return c;
+        return { ...c, platform: String(platform || '').trim(), name: trimmedName, identity: String(identity || '').trim(), phone: String(phone || '').trim(), remark: String(remark || '').trim() };
+      }));
+      return;
+    }
+    if (approval.actionType === 'profile_delete') {
+      const customerIdNum = Number(approval.payload.customerId);
+      const profileIdNum = Number(approval.payload.profileId);
+      if (!Number.isFinite(customerIdNum) || !Number.isFinite(profileIdNum)) return;
+      setOfflineRecipientDirectory(prev => prev.map(customer => {
+        if (customer.id !== customerIdNum) return customer;
+        const profiles = (customer.profiles || []).filter(profile => profile.id !== profileIdNum);
+        const hasDefault = profiles.some(profile => profile.isDefault);
+        const normalized = profiles.map((profile, idx) => ({ ...profile, isDefault: hasDefault ? profile.isDefault : idx === 0 }));
+        return { ...customer, profiles: normalized };
+      }));
+      if (String(offlineEditingProfileId) === String(profileIdNum)) {
+        setOfflineEditingProfileId('');
+        setOfflineProfileLabel('');
+        setOfflineProfileReceiver('');
+        setOfflineProfilePhone('');
+        setOfflineProfileAddress('');
+        setOfflineProfileRemark('');
+      }
+      return;
+    }
+    if (approval.actionType === 'customer_delete') {
+      const targetId = Number(approval.payload.customerId);
+      if (!Number.isFinite(targetId)) return;
+      setOfflineRecipientDirectory(prev => prev.filter(c => c.id !== targetId));
+      if (String(offlineSelectedCustomerId) === String(targetId)) {
+        setOfflineSelectedCustomerId('');
+      }
+      if (String(offlineTxCustomerId) === String(targetId)) {
+        setOfflineTxCustomerId('');
+        setOfflineTxProfileId('');
+      }
+      setOfflineEditingProfileId('');
+      setOfflineProfileLabel('');
+      setOfflineProfileReceiver('');
+      setOfflineProfilePhone('');
+      setOfflineProfileAddress('');
+      setOfflineProfileRemark('');
+      return;
     }
   };
 
@@ -848,7 +1051,7 @@ const App = () => {
         reviewedAt: now,
       };
     }));
-    setWarning(decision === 'approved' ? '审批通过，删除操作已执行' : '审批已驳回');
+    setWarning(decision === 'approved' ? '审批通过，操作已执行' : '审批已驳回');
   };
 
   const updateSku = (id, field, value) => {
@@ -900,6 +1103,204 @@ const App = () => {
     if (!offlineSelectedItemId) setOfflineSelectedItemId(newItem.id);
   };
 
+  const addOfflineRecipientCustomer = () => {
+    if (!ensureEditPermission()) return;
+    const platform = String(offlineCustomerPlatform || '').trim();
+    const name = String(offlineCustomerName || '').trim();
+    const identity = String(offlineCustomerIdentity || '').trim();
+    const phone = String(offlineCustomerPhone || '').trim();
+    const remark = String(offlineCustomerRemark || '').trim();
+    const profileLabel = String(offlineProfileLabel || '').trim() || '默认地址';
+    const profileReceiver = String(offlineProfileReceiver || '').trim() || name;
+    const profilePhone = String(offlineProfilePhone || '').trim() || phone;
+    const profileAddress = String(offlineProfileAddress || '').trim();
+    const profileRemark = String(offlineProfileRemark || '').trim();
+    if (!name) {
+      setWarning('请输入客户名称');
+      return;
+    }
+    if (offlineRecipientDirectory.some(customer => customer.name === name)) {
+      setWarning('客户已存在，可直接在该客户下新增地址信息');
+      return;
+    }
+    const profiles = profileAddress
+      ? [{
+          id: Date.now() + 1,
+          label: profileLabel,
+          receiver: profileReceiver,
+          phone: profilePhone,
+          address: profileAddress,
+          remark: profileRemark,
+          isDefault: true,
+        }]
+      : [];
+    const newCustomer = {
+      id: Date.now(),
+      platform,
+      name,
+      identity,
+      phone,
+      remark,
+      profiles,
+    };
+    setOfflineRecipientDirectory(prev => [newCustomer, ...prev]);
+    setOfflineSelectedCustomerId(String(newCustomer.id));
+    setOfflineTxCustomerId(String(newCustomer.id));
+    setOfflineCustomerPlatform('');
+    setOfflineCustomerName('');
+    setOfflineCustomerIdentity('');
+    setOfflineCustomerPhone('');
+    setOfflineCustomerRemark('');
+    setOfflineProfileLabel('');
+    setOfflineProfileReceiver('');
+    setOfflineProfilePhone('');
+    setOfflineProfileAddress('');
+    setOfflineProfileRemark('');
+    setOfflineEditingProfileId('');
+  };
+
+  const openEditCustomerModal = (customerId) => {
+    if (!ensureEditPermission()) return;
+    const target = offlineRecipientDirectory.find(c => c.id === Number(customerId));
+    if (!target) return;
+    setEditingCustomerModal({
+      id: target.id,
+      platform: target.platform || '',
+      name: target.name || '',
+      identity: target.identity || '',
+      phone: target.phone || '',
+      remark: target.remark || '',
+    });
+  };
+
+  const saveEditCustomerModal = () => {
+    if (!editingCustomerModal) return;
+    const { id, platform, name, identity, phone, remark } = editingCustomerModal;
+    const trimmedName = String(name || '').trim();
+    if (!trimmedName) {
+      setWarning('客户名称不能为空');
+      return;
+    }
+    if (offlineRecipientDirectory.some(c => c.id !== id && c.name === trimmedName)) {
+      setWarning('已存在同名客户，请修改名称后再保存');
+      return;
+    }
+    const ok = requestDeleteApproval('customer_edit', trimmedName, { customerId: id, platform, name: trimmedName, identity: String(identity || '').trim(), phone: String(phone || '').trim(), remark: String(remark || '').trim() });
+    if (ok) setEditingCustomerModal(null);
+  };
+
+  const deleteOfflineRecipientCustomer = (customerId) => {
+    if (!ensureEditPermission()) return;
+    const targetId = Number(customerId);
+    const target = offlineRecipientDirectory.find(customer => customer.id === targetId);
+    if (!target) return;
+    const ok = window.confirm(`确定提交删除客户「${target.name}」的审批请求吗？`);
+    if (!ok) return;
+    requestDeleteApproval('customer_delete', target.name, { customerId: targetId });
+  };
+
+  const deleteOfflineRecipientProfile = (customerId, profileId) => {
+    if (!ensureEditPermission()) return;
+    const customerIdNum = Number(customerId);
+    const profileIdNum = Number(profileId);
+    if (!Number.isFinite(customerIdNum) || !Number.isFinite(profileIdNum)) return;
+    const targetCustomer = offlineRecipientDirectory.find(c => c.id === customerIdNum);
+    const targetProfile = (targetCustomer?.profiles || []).find(p => p.id === profileIdNum);
+    if (!targetCustomer || !targetProfile) return;
+    requestDeleteApproval('profile_delete', `${targetCustomer.name} - ${targetProfile.label || targetProfile.address || '地址'}`, { customerId: customerIdNum, profileId: profileIdNum });
+  };
+
+  const startEditOfflineRecipientProfile = (customerId, profileId) => {
+    if (!ensureEditPermission()) return;
+    const customerIdNum = Number(customerId);
+    const profileIdNum = Number(profileId);
+    if (!Number.isFinite(customerIdNum) || !Number.isFinite(profileIdNum)) return;
+    const targetCustomer = offlineRecipientDirectory.find(customer => customer.id === customerIdNum);
+    const targetProfile = (targetCustomer?.profiles || []).find(profile => profile.id === profileIdNum);
+    if (!targetCustomer || !targetProfile) {
+      setWarning('地址不存在，请刷新后重试');
+      return;
+    }
+    setOfflineSelectedCustomerId(String(customerIdNum));
+    setOfflineProfileLabel(String(targetProfile.label || ''));
+    setOfflineProfileReceiver(String(targetProfile.receiver || ''));
+    setOfflineProfilePhone(String(targetProfile.phone || ''));
+    setOfflineProfileAddress(String(targetProfile.address || ''));
+    setOfflineProfileRemark(String(targetProfile.remark || ''));
+    setOfflineEditingProfileId(String(profileIdNum));
+  };
+
+  const cancelEditOfflineRecipientProfile = () => {
+    setOfflineEditingProfileId('');
+    setOfflineProfileLabel('');
+    setOfflineProfileReceiver('');
+    setOfflineProfilePhone('');
+    setOfflineProfileAddress('');
+    setOfflineProfileRemark('');
+  };
+
+  const addOfflineRecipientProfile = () => {
+    if (!ensureEditPermission()) return;
+    const customerId = Number(offlineSelectedCustomerId);
+    const editingProfileId = Number(offlineEditingProfileId);
+    const isEditing = !!offlineEditingProfileId && Number.isFinite(editingProfileId);
+    if (!Number.isFinite(customerId)) {
+      setWarning('请先选择客户');
+      return;
+    }
+    const label = String(offlineProfileLabel || '').trim();
+    const receiver = String(offlineProfileReceiver || '').trim();
+    const phone = String(offlineProfilePhone || '').trim();
+    const address = String(offlineProfileAddress || '').trim();
+    const remark = String(offlineProfileRemark || '').trim();
+    if (!label) {
+      setWarning('请输入地址标签（如：广州仓 / 深圳办公室）');
+      return;
+    }
+    if (!address) {
+      setWarning('请输入详细收件地址');
+      return;
+    }
+
+    const targetCustomer = offlineRecipientDirectory.find(customer => customer.id === customerId);
+    if (!targetCustomer) {
+      setWarning('客户不存在，请刷新后重试');
+      return;
+    }
+    if (isEditing && !(targetCustomer.profiles || []).some(profile => profile.id === editingProfileId)) {
+      setWarning('待编辑地址不存在，请刷新后重试');
+      return;
+    }
+    if ((targetCustomer.profiles || []).some(profile => String(profile.label || '').trim() === label && profile.id !== editingProfileId)) {
+      setWarning('该客户下已存在同名地址标签，请更换标签');
+      return;
+    }
+
+    const newProfileId = Date.now();
+    setOfflineRecipientDirectory(prev => prev.map(customer => {
+      if (customer.id !== customerId) return customer;
+      const profiles = Array.isArray(customer.profiles) ? customer.profiles : [];
+      if (isEditing) {
+        const updatedProfiles = profiles.map(profile => {
+          if (profile.id !== editingProfileId) return profile;
+          return { ...profile, label, receiver, phone, address, remark };
+        });
+        return { ...customer, profiles: updatedProfiles };
+      }
+      const shouldDefault = profiles.length === 0;
+      const newProfile = { id: newProfileId, label, receiver, phone, address, remark, isDefault: shouldDefault };
+      return { ...customer, profiles: [...profiles, newProfile] };
+    }));
+    setOfflineTxProfileId(String(isEditing ? editingProfileId : newProfileId));
+    setOfflineProfileLabel('');
+    setOfflineProfileReceiver('');
+    setOfflineProfilePhone('');
+    setOfflineProfileAddress('');
+    setOfflineProfileRemark('');
+    setOfflineEditingProfileId('');
+    if (isEditing) setWarning('地址信息已更新');
+  };
+
   const deleteOfflineInventoryItem = (itemId) => {
     const targetId = Number(itemId);
     const targetItem = offlineInventoryItems.find(item => item.id === targetId);
@@ -914,8 +1315,12 @@ const App = () => {
     const itemIdNum = Number(offlineTxItemId);
     const qty = Math.max(0, Number(offlineTxQty || 0) || 0);
     const txType = offlineTxType === 'out' ? 'out' : 'in';
+    const txPurpose = offlineTxPurpose === 'sample' ? 'sample' : 'normal';
     const account = String(user?.email || '').trim();
     const remark = String(offlineTxRemark || '').trim();
+    const txCustomerIdNum = Number(offlineTxCustomerId);
+    const txProfileIdNum = Number(offlineTxProfileId);
+    const trackingNo = String(offlineTxTrackingNo || '').trim();
     if (!Number.isFinite(itemIdNum)) {
       setWarning('请选择线下库存品项');
       return;
@@ -938,6 +1343,28 @@ const App = () => {
       return;
     }
 
+    const selectedCustomer = Number.isFinite(txCustomerIdNum)
+      ? offlineRecipientDirectory.find(customer => customer.id === txCustomerIdNum)
+      : null;
+    const selectedProfile = selectedCustomer && Number.isFinite(txProfileIdNum)
+      ? (selectedCustomer.profiles || []).find(profile => profile.id === txProfileIdNum)
+      : null;
+
+    if (txType === 'out' && txPurpose === 'sample') {
+      if (!selectedCustomer) {
+        setWarning('寄样出库请选择客户');
+        return;
+      }
+      if (!selectedProfile) {
+        setWarning('寄样出库请选择客户收件信息');
+        return;
+      }
+      if (!trackingNo) {
+        setWarning('寄样出库请填写快递单号');
+        return;
+      }
+    }
+
     const now = new Date().toISOString();
     setOfflineInventoryItems(prev => prev.map(item => {
       if (item.id !== itemIdNum) return item;
@@ -955,8 +1382,8 @@ const App = () => {
       }
       return {
         ...item,
-        currentStock: currentStock - qty,
-        outboundTotal: outboundTotal + qty,
+        currentStock: Math.max(0, currentStock - qty),
+        outboundTotal: outboundTotal + (qty <= currentStock ? qty : currentStock),
         lastOutboundAccount: account,
         remark: remark || item.remark,
         updatedAt: now,
@@ -968,8 +1395,20 @@ const App = () => {
       itemId: targetItem.id,
       itemName: targetItem.name,
       type: txType,
+      purpose: txType === 'out' ? txPurpose : 'restock',
       qty,
       account,
+      customerId: selectedCustomer?.id || null,
+      customerName: selectedCustomer?.name || '',
+      customerPlatform: selectedCustomer?.platform || '',
+      customerIdentity: selectedCustomer?.identity || '',
+      customerPhone: selectedCustomer?.phone || '',
+      profileId: selectedProfile?.id || null,
+      profileLabel: selectedProfile?.label || '',
+      profileReceiver: selectedProfile?.receiver || '',
+      profilePhone: selectedProfile?.phone || '',
+      profileAddress: selectedProfile?.address || '',
+      trackingNo: txType === 'out' ? trackingNo : '',
       remark,
       operator: user?.email || '',
       happenedAt: now,
@@ -986,6 +1425,46 @@ const App = () => {
     const outboundTotal = offlineInventoryItems.reduce((sum, item) => sum + Number(item.outboundTotal || 0), 0);
     return { itemCount, currentTotal, inboundTotal, outboundTotal };
   }, [offlineInventoryItems]);
+
+  const offlineRecipientSummary = useMemo(() => {
+    const customerCount = offlineRecipientDirectory.length;
+    const profileCount = offlineRecipientDirectory.reduce((sum, customer) => sum + (customer.profiles || []).length, 0);
+    return { customerCount, profileCount };
+  }, [offlineRecipientDirectory]);
+
+  const filteredOfflineRecipients = useMemo(() => {
+    const query = String(offlineRecipientQuery || '').trim().toLowerCase();
+    if (!query) return offlineRecipientDirectory;
+    return offlineRecipientDirectory.filter(customer => {
+      const basic = [
+        customer.platform,
+        customer.name,
+        customer.identity,
+        customer.phone,
+        customer.remark,
+      ].map(v => String(v || '').toLowerCase()).join(' ');
+      const profileText = (customer.profiles || []).map(profile => [
+        profile.label,
+        profile.receiver,
+        profile.phone,
+        profile.address,
+        profile.remark,
+      ].map(v => String(v || '').toLowerCase()).join(' ')).join(' ');
+      return `${basic} ${profileText}`.includes(query);
+    });
+  }, [offlineRecipientDirectory, offlineRecipientQuery]);
+
+  const offlineSelectedCustomer = useMemo(() => {
+    const customerId = Number(offlineSelectedCustomerId);
+    if (!Number.isFinite(customerId)) return null;
+    return offlineRecipientDirectory.find(customer => customer.id === customerId) || null;
+  }, [offlineRecipientDirectory, offlineSelectedCustomerId]);
+
+  const offlineTxSelectedCustomer = useMemo(() => {
+    const customerId = Number(offlineTxCustomerId);
+    if (!Number.isFinite(customerId)) return null;
+    return offlineRecipientDirectory.find(customer => customer.id === customerId) || null;
+  }, [offlineRecipientDirectory, offlineTxCustomerId]);
 
   const offlineSelectedItem = useMemo(() => {
     if (!Number.isFinite(Number(offlineSelectedItemId))) return null;
@@ -1020,6 +1499,44 @@ const App = () => {
       setOfflineTxItemId(String(offlineInventoryItems[0].id));
     }
   }, [offlineInventoryItems, offlineTxItemId]);
+
+  useEffect(() => {
+    if (offlineRecipientDirectory.length === 0) {
+      setOfflineSelectedCustomerId('');
+      setOfflineTxCustomerId('');
+      setOfflineTxProfileId('');
+      return;
+    }
+
+    const hasSelectedCustomer = offlineRecipientDirectory.some(customer => String(customer.id) === String(offlineSelectedCustomerId));
+    if (!hasSelectedCustomer) {
+      setOfflineSelectedCustomerId(String(offlineRecipientDirectory[0].id));
+    }
+
+    const hasTxCustomer = offlineRecipientDirectory.some(customer => String(customer.id) === String(offlineTxCustomerId));
+    if (!hasTxCustomer) {
+      setOfflineTxCustomerId(String(offlineRecipientDirectory[0].id));
+    }
+  }, [offlineRecipientDirectory, offlineSelectedCustomerId, offlineTxCustomerId]);
+
+  useEffect(() => {
+    if (!offlineTxSelectedCustomer) {
+      setOfflineTxProfileId('');
+      return;
+    }
+    const profiles = offlineTxSelectedCustomer.profiles || [];
+    if (profiles.length === 0) {
+      setOfflineTxProfileId('');
+      return;
+    }
+    const hasProfile = profiles.some(profile => String(profile.id) === String(offlineTxProfileId));
+    if (!hasProfile) {
+      const defaultProfile = profiles.find(profile => profile.isDefault) || profiles[0];
+      setOfflineTxProfileId(String(defaultProfile.id));
+    }
+  }, [offlineTxSelectedCustomer, offlineTxProfileId]);
+
+
 
   useEffect(() => {
     if (offlineInventoryItems.length === 0) {
@@ -1290,17 +1807,23 @@ const App = () => {
       setWarning('当前商品没有采购单数据可导出');
       return;
     }
-    const headers = ['下单日期', '采购数量', '生产周期(天)', '头程方式', '头程时效(天)', '二程方式', '二程时效(天)', '预计到货日'];
+    const headers = ['PO编号', '下单日期', '采购数量', '生产周期(天)', '头程方式', '头程时效(天)', '二程方式', '二程时效(天)', '三程方式', '三程时效(天)', '状态', '预计到货日'];
+    const modeLabel = (m) => m === 'sea' ? '海运' : m === 'air' ? '空运' : '铁路';
+    const statusLabelMap = { pre_order: '预下订单', ordered: '已下单', cancelled: '已取消', in_production: '生产中', prod_complete: '生产完成', leg1_shipped: '头程已发', leg1_arrived: '头程到达', leg2_shipped: '二程已发', leg2_arrived: '二程到达', inspecting: '验货中', picking: '装柜中', bonded_warehouse: '保税仓', pending_shelving: '待上架', shelved: '已上架' };
     const rows = activeSku.pos.map(po => {
-      const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days)) * 86400000);
+      const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days || 0)) * 86400000);
       return [
+        po.poNumber || '',
         po.orderDate,
         po.qty,
         po.prodDays,
-        po.leg1Mode === 'sea' ? '海运' : po.leg1Mode === 'air' ? '空运' : '铁路',
+        modeLabel(po.leg1Mode),
         po.leg1Days,
-        po.leg2Mode === 'sea' ? '海运' : po.leg2Mode === 'air' ? '空运' : '铁路',
+        modeLabel(po.leg2Mode),
         po.leg2Days,
+        modeLabel(po.leg3Mode),
+        po.leg3Days || 0,
+        statusLabelMap[po.status] || po.status || '已下单',
         arrivalDate.toISOString().split('T')[0],
       ];
     });
@@ -1330,8 +1853,10 @@ const App = () => {
             setWarning('JSON 文件格式错误：应为数组格式');
             return;
           }
+          const validStatuses = ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'];
           const sanitized = imported.map((po, idx) => ({
             id: Number.isFinite(Number(po.id)) ? Number(po.id) : Date.now() + idx,
+            poNumber: String(po.poNumber ?? ''),
             orderDate: String(po.orderDate ?? new Date().toISOString().split('T')[0]).slice(0, 10),
             qty: clampNonNegativeInt(po.qty ?? 0, '采购数量'),
             prodDays: clampNonNegativeInt(po.prodDays ?? 0, '生产周期'),
@@ -1339,6 +1864,9 @@ const App = () => {
             leg1Days: clampNonNegativeInt(po.leg1Days ?? 0, '头程时效'),
             leg2Mode: ['sea', 'air', 'rail'].includes(po.leg2Mode) ? po.leg2Mode : 'sea',
             leg2Days: clampNonNegativeInt(po.leg2Days ?? 0, '二程时效'),
+            leg3Mode: ['sea', 'air', 'rail'].includes(po.leg3Mode) ? po.leg3Mode : 'sea',
+            leg3Days: clampNonNegativeInt(po.leg3Days ?? 0, '三程时效'),
+            status: validStatuses.includes(po.status) ? po.status : 'ordered',
           }));
           setSkus(prev => prev.map(s => s.id === activeSku.id ? { ...s, pos: [...(s.pos || []), ...sanitized] } : s));
         } catch (err) {
@@ -1368,19 +1896,24 @@ const App = () => {
             return;
           }
           const imported = [];
+          const statusMap = { '预下订单': 'pre_order', '已下单': 'ordered', '已取消': 'cancelled', '生产中': 'in_production', '生产完成': 'prod_complete', '头程已发': 'leg1_shipped', '头程到达': 'leg1_arrived', '二程已发': 'leg2_shipped', '二程到达': 'leg2_arrived', '验货中': 'inspecting', '装柜中': 'picking', '保税仓': 'bonded_warehouse', '待上架': 'pending_shelving', '已上架': 'shelved' };
           for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',').map(c => c.trim());
-            if (cols.length < 8) continue;
+            if (cols.length < 10) continue;
             const modeMap = { '海运': 'sea', '空运': 'air', '铁路': 'rail' };
             imported.push({
               id: Date.now() + i,
-              orderDate: cols[0] || new Date().toISOString().split('T')[0],
-              qty: clampNonNegativeInt(cols[1] ?? 0, '采购数量'),
-              prodDays: clampNonNegativeInt(cols[2] ?? 0, '生产周期'),
-              leg1Mode: modeMap[cols[3]] || 'sea',
-              leg1Days: clampNonNegativeInt(cols[4] ?? 0, '头程时效'),
-              leg2Mode: modeMap[cols[5]] || 'sea',
-              leg2Days: clampNonNegativeInt(cols[6] ?? 0, '二程时效'),
+              poNumber: cols[0] || '',
+              orderDate: cols[1] || new Date().toISOString().split('T')[0],
+              qty: clampNonNegativeInt(cols[2] ?? 0, '采购数量'),
+              prodDays: clampNonNegativeInt(cols[3] ?? 0, '生产周期'),
+              leg1Mode: modeMap[cols[4]] || 'sea',
+              leg1Days: clampNonNegativeInt(cols[5] ?? 0, '头程时效'),
+              leg2Mode: modeMap[cols[6]] || 'sea',
+              leg2Days: clampNonNegativeInt(cols[7] ?? 0, '二程时效'),
+              leg3Mode: modeMap[cols[8]] || 'sea',
+              leg3Days: clampNonNegativeInt(cols[9] ?? 0, '三程时效'),
+              status: statusMap[cols[10]] || 'ordered',
             });
           }
           if (imported.length === 0) {
@@ -2056,12 +2589,11 @@ const App = () => {
               <button onClick={() => setViewMode('offline')} className="w-full bg-amber-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-amber-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                 <Factory size={18}/> 线下库存页
               </button>
+              <button onClick={() => setViewMode('recipient-library')} className="w-full bg-violet-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-violet-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                <List size={18}/> 客户信息库
+              </button>
               <button
                 onClick={() => {
-                  if (!canApproveDeletion) {
-                    setWarning('仅管理员可进入审批中心');
-                    return;
-                  }
                   setViewMode('approval');
                 }}
                 className="w-full bg-rose-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-rose-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase relative"
@@ -2437,6 +2969,96 @@ const App = () => {
                                )}
                              </div>
                            )}
+
+                           {/* 预下订单分组 */}
+                           {activeSku?.pos?.some(po => po.status === 'pre_order') && (poFilter === 'all' || poFilter === 'pending') && (
+                             <div className="mb-4">
+                               <button
+                                 onClick={() => setExpandedPoGroups(prev => ({ ...prev, pre_order: !prev.pre_order }))}
+                                 className="w-full flex items-center gap-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors font-bold text-sm uppercase tracking-tighter text-slate-600 mb-2"
+                               >
+                                 <span className={`transition-transform ${expandedPoGroups.pre_order ? 'rotate-90' : ''}`}>▶</span>
+                                 📝 预下订单 ({activeSku.pos.filter(p => p.status === 'pre_order').length})
+                               </button>
+                               {expandedPoGroups.pre_order && (
+                                 <div className="space-y-2">
+                                   {activeSku?.pos?.filter(po => po.status === 'pre_order').map(po => {
+                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000).toLocaleDateString();
+                                     const isExpanded = expandedPoId === po.id;
+                                     return (
+                                     <div key={po.id} className="rounded-xl relative group border border-slate-200 bg-slate-50/50 hover:border-slate-300 transition-all p-3">
+                                        <button onClick={() => setExpandedPoId(isExpanded ? null : po.id)} className="w-full flex items-center justify-between hover:opacity-70 transition-opacity">
+                                          <span className="flex items-center gap-2 flex-1 text-left">
+                                            <span className={`transition-transform text-[10px] ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                            <span className="text-[10px] font-black text-slate-500 uppercase">采购单号 {po.poNumber}</span>
+                                          </span>
+                                          <span className="text-[11px] font-bold text-slate-600 bg-slate-100 rounded px-2 py-0.5">{po.qty} 件</span>
+                                        </button>
+                                        {!isExpanded && (
+                                          <div className="flex items-center justify-between gap-2 text-[10px] font-bold mt-2 px-1 text-slate-500">
+                                            <span>下单 {po.orderDate}</span>
+                                            <span>预计到货 {arrivalDate}</span>
+                                            <span className="text-[9px] bg-slate-100 rounded px-1.5 py-0.5">预下订单</span>
+                                          </div>
+                                        )}
+                                        {isExpanded && (
+                                          <div className="mt-3 space-y-2 border-t pt-3">
+                                            <div className="grid grid-cols-2 gap-2">
+                                              <div className="text-[10px] text-slate-500 font-bold">下单日期: {po.orderDate}</div>
+                                              <div className="text-[10px] text-slate-500 font-bold">预计到货: {arrivalDate}</div>
+                                              <div className="text-[10px] text-slate-500 font-bold">采购数量: {po.qty}</div>
+                                              <div className="text-[10px] text-slate-500 font-bold">生产周期: {po.prodDays}天</div>
+                                            </div>
+                                            <div className="flex items-center gap-1 pt-1">
+                                              <select value={po.status} onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)} className="text-[10px] border rounded px-2 py-1 font-bold">
+                                                {['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].map(s => (
+                                                  <option key={s} value={s}>{['预下订单', '已下单', '取消订单', '生产中', '生产完成', '头程发货', '头程到货', '二程发货', '二程到货', '查验中', '提货中', '到达保税仓', '待理货上架', '已理货上架'][['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].indexOf(s)]}</option>
+                                                ))}
+                                              </select>
+                                              <button onClick={() => removePO(activeSku.id, po.id)} className="text-[10px] text-rose-500 hover:text-rose-700 font-bold px-2 py-1 rounded hover:bg-rose-50">删除</button>
+                                            </div>
+                                          </div>
+                                        )}
+                                     </div>
+                                     );
+                                   })}
+                                 </div>
+                               )}
+                             </div>
+                           )}
+
+                           {/* 已取消分组 */}
+                           {activeSku?.pos?.some(po => po.status === 'cancelled') && (poFilter === 'all') && (
+                             <div className="mb-4">
+                               <button
+                                 onClick={() => setExpandedPoGroups(prev => ({ ...prev, cancelled: !prev.cancelled }))}
+                                 className="w-full flex items-center gap-2 px-4 py-3 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition-colors font-bold text-sm uppercase tracking-tighter text-rose-600 mb-2"
+                               >
+                                 <span className={`transition-transform ${expandedPoGroups.cancelled ? 'rotate-90' : ''}`}>▶</span>
+                                 ✕ 已取消 ({activeSku.pos.filter(p => p.status === 'cancelled').length})
+                               </button>
+                               {expandedPoGroups.cancelled && (
+                                 <div className="space-y-2">
+                                   {activeSku?.pos?.filter(po => po.status === 'cancelled').map(po => (
+                                     <div key={po.id} className="rounded-xl border border-rose-200 bg-rose-50/50 p-3 flex items-center justify-between">
+                                       <div>
+                                         <span className="text-[10px] font-black text-slate-500 uppercase">采购单号 {po.poNumber}</span>
+                                         <span className="text-[10px] text-slate-400 ml-3">数量 {po.qty} · 下单 {po.orderDate}</span>
+                                       </div>
+                                       <div className="flex items-center gap-2">
+                                         <select value={po.status} onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)} className="text-[10px] border rounded px-2 py-1 font-bold">
+                                           {['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].map(s => (
+                                             <option key={s} value={s}>{['预下订单', '已下单', '取消订单', '生产中', '生产完成', '头程发货', '头程到货', '二程发货', '二程到货', '查验中', '提货中', '到达保税仓', '待理货上架', '已理货上架'][['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].indexOf(s)]}</option>
+                                           ))}
+                                         </select>
+                                         <button onClick={() => removePO(activeSku.id, po.id)} className="text-[10px] text-rose-500 hover:text-rose-700 font-bold px-2 py-1 rounded hover:bg-rose-50">删除</button>
+                                       </div>
+                                     </div>
+                                   ))}
+                                 </div>
+                               )}
+                             </div>
+                           )}
                         </div>
                      </div>
                   </div>
@@ -2736,12 +3358,13 @@ const App = () => {
               <p className="text-xs text-slate-500 font-bold mt-1">管理消费者退回库存等不可回保税仓货物，独立于保税仓库存系统</p>
             </div>
             <div className="flex items-center gap-3">
+              <button onClick={() => setViewMode('recipient-library')} className="px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700">客户信息库</button>
               <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
               <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>
             </div>
           </div>
 
-          <div className="grid grid-cols-4 gap-4 mb-5">
+          <div className="grid grid-cols-5 gap-4 mb-5">
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <div className="text-[10px] font-black text-slate-500 uppercase">线下品项数</div>
               <div className="text-2xl font-black text-slate-800">{offlineInventorySummary.itemCount}</div>
@@ -2757,6 +3380,10 @@ const App = () => {
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <div className="text-[10px] font-black text-slate-500 uppercase">累计出库</div>
               <div className="text-2xl font-black text-rose-700">{Math.round(offlineInventorySummary.outboundTotal).toLocaleString()}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">客户 / 收件信息</div>
+              <div className="text-2xl font-black text-violet-700">{offlineRecipientSummary.customerCount} / {offlineRecipientSummary.profileCount}</div>
             </div>
           </div>
 
@@ -2823,6 +3450,16 @@ const App = () => {
                       className={`py-2 rounded-lg text-xs font-black border ${offlineTxType === 'out' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-slate-600 border-slate-300'}`}
                     >出库</button>
                   </div>
+                  {offlineTxType === 'out' && (
+                    <select
+                      value={offlineTxPurpose}
+                      onChange={e => setOfflineTxPurpose(e.target.value === 'sample' ? 'sample' : 'normal')}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                    >
+                      <option value="normal">用途：常规出库</option>
+                      <option value="sample">用途：寄样</option>
+                    </select>
+                  )}
                   <input
                     type="number"
                     value={offlineTxQty}
@@ -2830,6 +3467,43 @@ const App = () => {
                     placeholder="数量"
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
                   />
+                  {offlineTxType === 'out' && offlineTxPurpose === 'sample' && (
+                    <>
+                      <select
+                        value={offlineTxCustomerId}
+                        onChange={e => setOfflineTxCustomerId(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                      >
+                        {offlineRecipientDirectory.length === 0 ? (
+                          <option value="">请先在客户信息库新增客户</option>
+                        ) : (
+                          offlineRecipientDirectory.map(customer => (
+                            <option key={customer.id} value={customer.id}>{`${customer.platform || '未填平台'} / ${customer.name} / ${customer.identity || '-'}`}</option>
+                          ))
+                        )}
+                      </select>
+                      <select
+                        value={offlineTxProfileId}
+                        onChange={e => setOfflineTxProfileId(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                      >
+                        {!offlineTxSelectedCustomer || (offlineTxSelectedCustomer.profiles || []).length === 0 ? (
+                          <option value="">该客户暂无收件信息，请先新增</option>
+                        ) : (
+                          (offlineTxSelectedCustomer.profiles || []).map(profile => (
+                            <option key={profile.id} value={profile.id}>{`${profile.label} · ${profile.receiver || '-'} · ${profile.phone || '-'} · ${profile.address}`}</option>
+                          ))
+                        )}
+                      </select>
+                      <input
+                        type="text"
+                        value={offlineTxTrackingNo}
+                        onChange={e => setOfflineTxTrackingNo(e.target.value)}
+                        placeholder="快递单号"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                      />
+                    </>
+                  )}
                   <input
                     type="text"
                     value={String(user?.email || '')}
@@ -2848,7 +3522,17 @@ const App = () => {
                   >
                     记录本次{offlineTxType === 'in' ? '入库' : '出库'}（账号：{String(user?.email || '未登录')})
                   </button>
+                  {offlineTxType === 'out' && offlineTxPurpose === 'sample' && (
+                    <div className="text-[10px] text-slate-500 font-medium bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                      同一客户同一快递单可连续登记多种 SKU：保持客户和单号不变，逐个切 SKU 录入出库数量即可。
+                    </div>
+                  )}
                 </div>
+              </div>
+
+              <div className="bg-white border border-violet-200 rounded-2xl p-4">
+                <div className="text-sm font-black text-violet-800">客户信息维护已迁移至独立页面</div>
+                <div className="text-xs text-violet-600 font-medium mt-2">点击上方「客户信息库」按钮维护平台、姓名、职位/身份、手机号与地址。</div>
               </div>
             </div>
 
@@ -2926,14 +3610,17 @@ const App = () => {
                           <tr>
                             <th className="px-4 py-3">时间</th>
                             <th className="px-4 py-3">类型</th>
+                            <th className="px-4 py-3">用途</th>
                             <th className="px-4 py-3 text-right">数量</th>
                             <th className="px-4 py-3">操作账号</th>
+                            <th className="px-4 py-3">客户 / 收件</th>
+                            <th className="px-4 py-3">快递单号</th>
                             <th className="px-4 py-3">备注</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
                           {selectedOfflineLogs.length === 0 ? (
-                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={5}>该 SKU 暂无记录</td></tr>
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={8}>该 SKU 暂无记录</td></tr>
                           ) : selectedOfflineLogs.map(log => (
                             <tr key={`selected-${log.id}`} className="hover:bg-slate-50">
                               <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
@@ -2942,8 +3629,13 @@ const App = () => {
                                   {log.type === 'in' ? '入库' : '出库'}
                                 </span>
                               </td>
+                              <td className="px-4 py-3 text-slate-600">
+                                {log.type === 'in' ? '补货入库' : (log.purpose === 'sample' ? '寄样' : '常规出库')}
+                              </td>
                               <td className="px-4 py-3 text-right font-black">{Math.round(log.qty).toLocaleString()}</td>
                               <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
+                              <td className="px-4 py-3 text-slate-600">{log.customerName ? `${log.customerPlatform || '-'} / ${log.customerName} / ${log.customerIdentity || '-'} / ${log.customerPhone || '-'} / ${log.profileAddress || '-'}` : '-'}</td>
+                              <td className="px-4 py-3 text-slate-600 font-mono">{log.trackingNo || '-'}</td>
                               <td className="px-4 py-3 text-slate-500">{log.remark || '-'}</td>
                             </tr>
                           ))}
@@ -2960,20 +3652,26 @@ const App = () => {
                           <tr>
                             <th className="px-4 py-3">时间</th>
                             <th className="px-4 py-3">SKU</th>
+                            <th className="px-4 py-3">用途</th>
                             <th className="px-4 py-3 text-right">出库数量</th>
                             <th className="px-4 py-3">操作账号</th>
+                            <th className="px-4 py-3">客户 / 收件</th>
+                            <th className="px-4 py-3">快递单号</th>
                             <th className="px-4 py-3">备注</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
                           {offlineOutboundSummaryLogs.length === 0 ? (
-                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={5}>暂无出库汇总记录</td></tr>
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={8}>暂无出库汇总记录</td></tr>
                           ) : offlineOutboundSummaryLogs.map(log => (
                             <tr key={`out-${log.id}`} className="hover:bg-slate-50">
                               <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
                               <td className="px-4 py-3 font-bold text-slate-700">{log.itemName}</td>
+                              <td className="px-4 py-3 text-slate-600">{log.purpose === 'sample' ? '寄样' : '常规出库'}</td>
                               <td className="px-4 py-3 text-right font-black text-rose-700">{Math.round(log.qty).toLocaleString()}</td>
                               <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
+                              <td className="px-4 py-3 text-slate-600">{log.customerName ? `${log.customerPlatform || '-'} / ${log.customerName} / ${log.customerIdentity || '-'} / ${log.customerPhone || '-'} / ${log.profileAddress || '-'}` : '-'}</td>
+                              <td className="px-4 py-3 text-slate-600 font-mono">{log.trackingNo || '-'}</td>
                               <td className="px-4 py-3 text-slate-500">{log.remark || '-'}</td>
                             </tr>
                           ))}
@@ -2986,12 +3684,175 @@ const App = () => {
             </div>
           </div>
         </div>
+      ) : viewMode === 'recipient-library' ? (
+        <div className="flex-1 flex flex-col p-6 bg-slate-50 min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">客户信息库</h1>
+              <p className="text-xs text-slate-500 font-bold mt-1">维护寄样所需客户信息：平台、姓名、职位/身份、手机号、地址</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setViewMode('offline')} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs hover:bg-amber-700">返回线下库存</button>
+              <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4 mb-5">
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">客户数</div>
+              <div className="text-2xl font-black text-violet-700">{offlineRecipientSummary.customerCount}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">地址信息数</div>
+              <div className="text-2xl font-black text-indigo-700">{offlineRecipientSummary.profileCount}</div>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+              <div className="text-[10px] font-black text-slate-500 uppercase">可用于寄样出库</div>
+              <div className="text-2xl font-black text-emerald-700">{offlineRecipientSummary.profileCount > 0 ? '是' : '否'}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[380px_1fr] gap-6 flex-1 min-h-0">
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 overflow-y-auto space-y-3">
+              <h3 className="text-sm font-black text-slate-800">新增客户</h3>
+              <input type="text" value={offlineCustomerPlatform} onChange={e => setOfflineCustomerPlatform(e.target.value)} placeholder="平台（如：Amazon / TikTok / 独立站）" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+              <input type="text" value={offlineCustomerName} onChange={e => setOfflineCustomerName(e.target.value)} placeholder="姓名 *" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+              <input type="text" value={offlineCustomerIdentity} onChange={e => setOfflineCustomerIdentity(e.target.value)} placeholder="职位/身份" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+              <input type="text" value={offlineCustomerPhone} onChange={e => setOfflineCustomerPhone(e.target.value)} placeholder="手机号" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+              <textarea value={offlineCustomerRemark} onChange={e => setOfflineCustomerRemark(e.target.value)} placeholder="备注（可选）" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium h-16 resize-none" />
+
+              <div className="pt-2 border-t border-slate-200">
+                <div className="text-xs font-black text-slate-700 mb-2">地址信息（可选，可后续补充）</div>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <input type="text" value={offlineProfileLabel} onChange={e => setOfflineProfileLabel(e.target.value)} placeholder="地址标签（如：公司/仓库）" className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                  <input type="text" value={offlineProfileReceiver} onChange={e => setOfflineProfileReceiver(e.target.value)} placeholder="收件人" className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                  <input type="text" value={offlineProfilePhone} onChange={e => setOfflineProfilePhone(e.target.value)} placeholder="收件手机号" className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                  <input type="text" value={offlineProfileRemark} onChange={e => setOfflineProfileRemark(e.target.value)} placeholder="地址备注（可选）" className="px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                </div>
+                <textarea value={offlineProfileAddress} onChange={e => setOfflineProfileAddress(e.target.value)} placeholder="详细地址" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium h-16 resize-none" />
+              </div>
+
+              <button onClick={addOfflineRecipientCustomer} className="w-full bg-violet-600 text-white py-2.5 rounded-lg font-black text-xs hover:bg-violet-700">+ 新增客户</button>
+
+              {offlineSelectedCustomerId && (
+                <>
+                  <div className="pt-2 border-t border-slate-200">
+                    <div className="text-xs font-black text-slate-700 mb-2">{offlineEditingProfileId ? '编辑地址' : '给当前选中客户新增地址'}</div>
+                  </div>
+                  <button
+                    onClick={addOfflineRecipientProfile}
+                    disabled={!offlineSelectedCustomerId}
+                    className={`w-full py-2 rounded-lg font-black text-xs ${offlineEditingProfileId ? 'bg-amber-600 text-white hover:bg-amber-700' : 'bg-slate-700 text-white hover:bg-slate-800'}`}
+                  >{offlineEditingProfileId ? '保存地址修改' : '+ 给当前客户新增地址'}</button>
+                  {offlineEditingProfileId ? (
+                    <button onClick={cancelEditOfflineRecipientProfile} className="w-full bg-slate-100 text-slate-700 py-1.5 rounded-lg font-black text-xs hover:bg-slate-200">取消地址编辑</button>
+                  ) : null}
+                </>
+              )}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 overflow-hidden flex flex-col min-h-0">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <h3 className="text-sm font-black text-slate-800">客户清单</h3>
+                <input type="text" value={offlineRecipientQuery} onChange={e => setOfflineRecipientQuery(e.target.value)} placeholder="筛选：平台 / 姓名 / 身份 / 手机 / 地址" className="w-80 px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium" />
+              </div>
+              <div className="flex-1 min-h-0 mb-3 overflow-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-slate-50 border-b text-slate-500 uppercase">
+                    <tr>
+                      <th className="px-3 py-2">平台</th>
+                      <th className="px-3 py-2">姓名</th>
+                      <th className="px-3 py-2">职位/身份</th>
+                      <th className="px-3 py-2">手机号</th>
+                      <th className="px-3 py-2 text-right">地址数</th>
+                      <th className="px-3 py-2 text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filteredOfflineRecipients.length === 0 ? (
+                      <tr><td className="px-3 py-6 text-center text-slate-400 italic" colSpan={6}>无匹配客户</td></tr>
+                    ) : filteredOfflineRecipients.map(customer => (
+                      <tr
+                        key={`recipient-${customer.id}`}
+                        onClick={() => { setOfflineSelectedCustomerId(String(customer.id)); setOfflineEditingProfileId(''); setOfflineProfileLabel(''); setOfflineProfileReceiver(''); setOfflineProfilePhone(''); setOfflineProfileAddress(''); setOfflineProfileRemark(''); }}
+                        className={`cursor-pointer hover:bg-slate-50 ${String(offlineSelectedCustomerId) === String(customer.id) ? 'bg-indigo-50' : ''}`}
+                      >
+                        <td className="px-3 py-2 text-slate-600">{customer.platform || '-'}</td>
+                        <td className="px-3 py-2 font-bold text-slate-700">{customer.name || '-'}</td>
+                        <td className="px-3 py-2 text-slate-600">{customer.identity || '-'}</td>
+                        <td className="px-3 py-2 text-slate-600">{customer.phone || '-'}</td>
+                        <td className="px-3 py-2 text-right font-black text-indigo-700">{(customer.profiles || []).length}</td>
+                        <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => openEditCustomerModal(customer.id)} disabled={!canEditData} className={`px-2 py-1 rounded border text-[11px] font-bold mr-1 ${canEditData ? 'border-indigo-300 text-indigo-700 hover:bg-indigo-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}>编辑</button>
+                          <button onClick={() => deleteOfflineRecipientCustomer(customer.id)} disabled={!canEditData} className={`px-2 py-1 rounded border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}>删除</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <h4 className="text-xs font-black text-slate-700 mb-2">{offlineSelectedCustomer ? `${offlineSelectedCustomer.name} 的地址` : '选择客户查看地址'}</h4>
+              {offlineEditingProfileId ? (
+                <div className="text-[11px] text-amber-700 font-bold mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                  正在编辑地址，修改后请点击左侧「保存地址修改」按钮。
+                </div>
+              ) : null}
+              <div className="max-h-44 overflow-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-slate-50 border-b text-slate-500 uppercase">
+                    <tr>
+                      <th className="px-3 py-2">标签</th>
+                      <th className="px-3 py-2">收件人</th>
+                      <th className="px-3 py-2">手机号</th>
+                      <th className="px-3 py-2">地址</th>
+                      <th className="px-3 py-2 text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {!offlineSelectedCustomer || (offlineSelectedCustomer.profiles || []).length === 0 ? (
+                      <tr><td className="px-3 py-6 text-center text-slate-400 italic" colSpan={5}>暂无地址信息</td></tr>
+                    ) : (offlineSelectedCustomer.profiles || []).map(profile => (
+                      <tr key={profile.id} className={String(offlineEditingProfileId) === String(profile.id) ? 'bg-amber-50 ring-1 ring-amber-300' : ''}>
+                        <td className="px-3 py-2 font-bold text-slate-700">{profile.label || '-'}{String(offlineEditingProfileId) === String(profile.id) ? <span className="ml-1 text-[10px] text-amber-600 font-black">(编辑中)</span> : null}</td>
+                        <td className="px-3 py-2 text-slate-600">{profile.receiver || '-'}</td>
+                        <td className="px-3 py-2 text-slate-600">{profile.phone || '-'}</td>
+                        <td className="px-3 py-2 text-slate-600">{profile.address || '-'}</td>
+                        <td className="px-3 py-2 text-center">
+                          <button onClick={() => startEditOfflineRecipientProfile(offlineSelectedCustomer.id, profile.id)} disabled={!canEditData} className={`px-2 py-1 rounded border text-[11px] font-bold mr-1 ${canEditData ? 'border-indigo-300 text-indigo-700 hover:bg-indigo-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}>编辑</button>
+                          <button onClick={() => deleteOfflineRecipientProfile(offlineSelectedCustomer.id, profile.id)} disabled={!canEditData} className={`px-2 py-1 rounded border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}>删除</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {editingCustomerModal && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setEditingCustomerModal(null)}>
+              <div className="bg-white rounded-2xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-black text-slate-800">编辑客户信息</h3>
+                <input type="text" value={editingCustomerModal.platform} onChange={e => setEditingCustomerModal(prev => ({ ...prev, platform: e.target.value }))} placeholder="平台" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                <input type="text" value={editingCustomerModal.name} onChange={e => setEditingCustomerModal(prev => ({ ...prev, name: e.target.value }))} placeholder="姓名 *" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                <input type="text" value={editingCustomerModal.identity} onChange={e => setEditingCustomerModal(prev => ({ ...prev, identity: e.target.value }))} placeholder="职位/身份" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                <input type="text" value={editingCustomerModal.phone} onChange={e => setEditingCustomerModal(prev => ({ ...prev, phone: e.target.value }))} placeholder="手机号" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium" />
+                <textarea value={editingCustomerModal.remark} onChange={e => setEditingCustomerModal(prev => ({ ...prev, remark: e.target.value }))} placeholder="备注（可选）" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium h-20 resize-none" />
+                <div className="flex gap-3">
+                  <button onClick={() => setEditingCustomerModal(null)} className="flex-1 bg-slate-100 text-slate-700 py-2.5 rounded-lg font-black text-xs hover:bg-slate-200">取消</button>
+                  <button onClick={saveEditCustomerModal} className="flex-1 bg-indigo-600 text-white py-2.5 rounded-lg font-black text-xs hover:bg-indigo-700">保存修改</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       ) : viewMode === 'approval' ? (
         <div className="flex-1 flex flex-col p-6 bg-slate-50 min-w-0 overflow-hidden">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-black text-slate-900 tracking-tight">删除审批中心</h1>
-              <p className="text-xs text-slate-500 font-bold mt-1">所有删除操作需经管理员审批后执行</p>
+              <h1 className="text-3xl font-black text-slate-900 tracking-tight">审批中心</h1>
+              <p className="text-xs text-slate-500 font-bold mt-1">删除、编辑等重要操作需经管理员审批后执行</p>
             </div>
             <div className="flex items-center gap-3">
               <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
@@ -2999,14 +3860,9 @@ const App = () => {
             </div>
           </div>
 
-          {!canApproveDeletion ? (
-            <div className="flex-1 bg-white border border-slate-200 rounded-2xl flex items-center justify-center">
-              <div className="text-center">
-                <div className="text-lg font-black text-slate-800">仅管理员可审批</div>
-                <div className="text-xs text-slate-500 font-bold mt-2">当前账号仅可查看业务页面，无法进入审批中心</div>
-              </div>
-            </div>
-          ) : (
+          {!canApproveDeletion && (
+            <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs font-bold text-amber-700">当前账号为只读权限，可查看审批记录但无法操作审批</div>
+          )}
             <div className="grid grid-cols-2 gap-6 flex-1 min-h-0">
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col min-h-0">
                 <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
@@ -3026,7 +3882,7 @@ const App = () => {
                           disabled={!canApproveDeletion}
                           className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200 transition-colors text-[10px] font-black"
                         >
-                          通过并删除
+                          {item.actionType === 'customer_edit' ? '通过并执行' : '通过并删除'}
                         </button>
                         <button
                           onClick={() => reviewDeleteApproval(item.id, 'rejected')}
@@ -3063,7 +3919,6 @@ const App = () => {
                 </div>
               </div>
             </div>
-          )}
         </div>
       ) : (
         /* --- 战略全景大屏 --- */
@@ -3352,20 +4207,25 @@ const App = () => {
                  // 定义状态颜色映射，更柔和的版本
                  pre_order: { bg: 'bg-slate-100', text: 'text-slate-600', darkBg: 'bg-slate-800', darkText: 'text-slate-400' },
                  ordered: { bg: 'bg-slate-200', text: 'text-slate-800', darkBg: 'bg-slate-700', darkText: 'text-slate-200' },
+                 cancelled: { bg: 'bg-red-50', text: 'text-red-700', darkBg: 'bg-red-900/30', darkText: 'text-red-400' },
                  in_production: { bg: 'bg-amber-50', text: 'text-amber-700', darkBg: 'bg-amber-900/30', darkText: 'text-amber-400' },
                  prod_complete: { bg: 'bg-orange-50', text: 'text-orange-700', darkBg: 'bg-orange-900/30', darkText: 'text-orange-400' },
                  leg1_shipped: { bg: 'bg-blue-50', text: 'text-blue-700', darkBg: 'bg-blue-900/30', darkText: 'text-blue-400' },
                  leg1_arrived: { bg: 'bg-cyan-50', text: 'text-cyan-700', darkBg: 'bg-cyan-900/30', darkText: 'text-cyan-400' },
                  leg2_shipped: { bg: 'bg-violet-50', text: 'text-violet-700', darkBg: 'bg-violet-900/30', darkText: 'text-violet-400' },
                  leg2_arrived: { bg: 'bg-purple-50', text: 'text-purple-700', darkBg: 'bg-purple-900/30', darkText: 'text-purple-400' },
+                 inspecting: { bg: 'bg-yellow-50', text: 'text-yellow-700', darkBg: 'bg-yellow-900/30', darkText: 'text-yellow-400' },
+                 picking: { bg: 'bg-lime-50', text: 'text-lime-700', darkBg: 'bg-lime-900/30', darkText: 'text-lime-400' },
+                 bonded_warehouse: { bg: 'bg-teal-50', text: 'text-teal-700', darkBg: 'bg-teal-900/30', darkText: 'text-teal-400' },
+                 pending_shelving: { bg: 'bg-green-50', text: 'text-green-700', darkBg: 'bg-green-900/30', darkText: 'text-green-400' },
                  shelved: { bg: 'bg-emerald-50', text: 'text-emerald-700', darkBg: 'bg-emerald-900/30', darkText: 'text-emerald-400' },
               }
               const defaultStatusColor = { bg: 'bg-slate-50', text: 'text-slate-600', darkBg: 'bg-slate-800/50', darkText: 'text-slate-500' };
 
               const statusLabel = {
-                pre_order: '预下订单', ordered: '已下单', in_production: '生产中', prod_complete: '生产完成',
+                pre_order: '预下订单', ordered: '已下单', cancelled: '已取消', in_production: '生产中', prod_complete: '生产完成',
                 leg1_shipped: '头程发货', leg1_arrived: '头程到货', leg2_shipped: '二程发货', leg2_arrived: '二程到货',
-                inspecting: '查验中', bonded_warehouse: '保税仓', pending_shelving: '待理货', shelved: '已上架'
+                inspecting: '查验中', picking: '装柜中', bonded_warehouse: '保税仓', pending_shelving: '待理货', shelved: '已上架'
               };
 
               // 过滤掉预下订单和已理货上架
