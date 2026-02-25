@@ -2011,15 +2011,28 @@ const App = () => {
         targetDayIndex = remainingDays >= 0 ? remainingDays : 400;
       }
     } else {
-      // 常规逻辑：查找最后库存>0的时刻
-      let lastPositiveIdx = -1;
-      for (let i = f.data.length - 1; i >= 0; i--) {
-        if (f.data[i].stock > 0) {
-          lastPositiveIdx = i;
-          break;
+      // 常规逻辑：查找第一个库存归零的时刻
+      const stockoutIdx = f.data.findIndex(d => d.stock <= 0);
+      if (stockoutIdx >= 0) {
+        targetDayIndex = stockoutIdx;
+      } else {
+        // 预测窗口内库存从未归零，用逐月消耗精确计算实际覆盖天数
+        const lastStock = f.data[f.data.length - 1].stock;
+        const lastDate = new Date(f.data[f.data.length - 1].date);
+        const monthlySales = getMonthlySalesForForecast(sku, new Date());
+        let remaining = lastStock;
+        let extraMonths = 0;
+        let counter = 120;
+        let mIdx = lastDate.getMonth();
+        while (remaining > 0 && counter-- > 0) {
+          const c = Number(monthlySales[mIdx] || 0);
+          if (c <= 0) { extraMonths = 999; break; }
+          if (remaining >= c) { remaining -= c; extraMonths += 1; }
+          else { extraMonths += remaining / c; remaining = 0; }
+          mIdx = (mIdx + 1) % 12;
         }
+        targetDayIndex = Math.round(((f.data.length - 1) / 30 + extraMonths) * 30);
       }
-      targetDayIndex = Math.max(0, lastPositiveIdx);
     }
     
     daysUntilStockout = Math.max(0, targetDayIndex);
@@ -2110,10 +2123,27 @@ const App = () => {
   }), [skus, warningDays]);
 
   const coverageSummary = useMemo(() => {
-    if (!activeForecast || !activeForecast.data || activeForecast.data.length === 0) return null;
+    if (!activeForecast || !activeForecast.data || activeForecast.data.length === 0 || !activeSku) return null;
     const idx = activeForecast.data.findIndex(d => d.stock <= 0);
     if (idx === -1) {
-      return { safe: true, days: 365, months: (365 / 30).toFixed(1), stockoutDate: null };
+      // 预测窗口内库存从未归零，用逐月消耗精确计算实际覆盖月数
+      const lastStock = activeForecast.data[activeForecast.data.length - 1].stock;
+      const lastDate = new Date(activeForecast.data[activeForecast.data.length - 1].date);
+      const monthlySales = getMonthlySalesForForecast(activeSku, new Date());
+      let remaining = lastStock;
+      let extraMonths = 0;
+      let counter = 120; // 安全上限 10 年
+      let mIdx = lastDate.getMonth();
+      while (remaining > 0 && counter-- > 0) {
+        const c = Number(monthlySales[mIdx] || 0);
+        if (c <= 0) { extraMonths = 999; break; }
+        if (remaining >= c) { remaining -= c; extraMonths += 1; }
+        else { extraMonths += remaining / c; remaining = 0; }
+        mIdx = (mIdx + 1) % 12;
+      }
+      const forecastMonths = (activeForecast.data.length - 1) / 30;
+      const totalMonths = forecastMonths + extraMonths;
+      return { safe: true, days: Math.round(totalMonths * 30), months: totalMonths >= 999 ? '999+' : totalMonths.toFixed(1), stockoutDate: null };
     }
     return {
       safe: false,
@@ -2121,7 +2151,7 @@ const App = () => {
       months: (idx / 30).toFixed(1),
       stockoutDate: activeForecast.data[idx].date,
     };
-  }, [activeForecast]);
+  }, [activeForecast, activeSku]);
 
   const fleetKpi = useMemo(() => {
     const today = new Date();
