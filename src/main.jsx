@@ -1936,7 +1936,11 @@ const App = () => {
     const data = [];
     let runningStock = Number(sku.currentStock || 0);
     const today = new Date();
-    const dailyRates = getMonthlySalesForForecast(sku, today).map(m => Number(m) / 30);
+    const rawDailyRates = getMonthlySalesForForecast(sku, today).map(m => Number(m) / 30);
+    // 对过去月份 actual=0 的情况，用非零月份的平均日消耗率替代，避免某月不消耗
+    const nonZeroRates = rawDailyRates.filter(r => r > 0);
+    const avgDailyRate = nonZeroRates.length > 0 ? nonZeroRates.reduce((a, b) => a + b, 0) / nonZeroRates.length : 0;
+    const dailyRates = rawDailyRates.map(r => r > 0 ? r : avgDailyRate);
     const monthEndStocks = [];
 
     for (let i = 0; i <= days; i++) {
@@ -2020,13 +2024,16 @@ const App = () => {
         const lastStock = f.data[f.data.length - 1].stock;
         const lastDate = new Date(f.data[f.data.length - 1].date);
         const monthlySales = getMonthlySalesForForecast(sku, new Date());
+        // 计算非零月份的平均消耗，作为过去月份 actual=0 的备用值
+        const nonZero = monthlySales.filter(v => v > 0);
+        const avgMonthly = nonZero.length > 0 ? nonZero.reduce((a, b) => a + b, 0) / nonZero.length : 0;
         let remaining = lastStock;
         let extraMonths = 0;
         let counter = 120;
         let mIdx = lastDate.getMonth();
         while (remaining > 0 && counter-- > 0) {
-          const c = Number(monthlySales[mIdx] || 0);
-          if (c <= 0) { extraMonths = 999; break; }
+          const c = Number(monthlySales[mIdx] || 0) || avgMonthly;
+          if (c <= 0) break; // 所有月份都是0，无法计算
           if (remaining >= c) { remaining -= c; extraMonths += 1; }
           else { extraMonths += remaining / c; remaining = 0; }
           mIdx = (mIdx + 1) % 12;
@@ -2130,13 +2137,16 @@ const App = () => {
       const lastStock = activeForecast.data[activeForecast.data.length - 1].stock;
       const lastDate = new Date(activeForecast.data[activeForecast.data.length - 1].date);
       const monthlySales = getMonthlySalesForForecast(activeSku, new Date());
+      // 计算非零月份的平均消耗，作为过去月份 actual=0 的备用值
+      const nonZero = monthlySales.filter(v => v > 0);
+      const avgMonthly = nonZero.length > 0 ? nonZero.reduce((a, b) => a + b, 0) / nonZero.length : 0;
       let remaining = lastStock;
       let extraMonths = 0;
       let counter = 120; // 安全上限 10 年
       let mIdx = lastDate.getMonth();
       while (remaining > 0 && counter-- > 0) {
-        const c = Number(monthlySales[mIdx] || 0);
-        if (c <= 0) { extraMonths = 999; break; }
+        const c = Number(monthlySales[mIdx] || 0) || avgMonthly;
+        if (c <= 0) break; // 所有月份都是0，无法计算
         if (remaining >= c) { remaining -= c; extraMonths += 1; }
         else { extraMonths += remaining / c; remaining = 0; }
         mIdx = (mIdx + 1) % 12;
