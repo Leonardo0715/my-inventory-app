@@ -2231,7 +2231,6 @@ const App = () => {
 
         if (po.status !== 'shelved') {
           openQty += qty;
-          openValue += qty * Number(sku.unitCost || 0);
         }
 
         if (po.status === 'shelved') statusCounts.completed += 1;
@@ -2303,7 +2302,7 @@ const App = () => {
     return { startStocks, inboundTotals, salesTotals };
   }, [dashboardData, salesSummary.totals, stockSummary.onHandStock]);
 
-  const hasUnitCost = useMemo(() => dashboardData.some(sku => Number(sku.unitCost || 0) > 0), [dashboardData]);
+  const hasUnitCost = false;
 
   const visibleForecastRows = useMemo(() => {
     if (!activeForecast || !activeForecast.data) return [];
@@ -2734,16 +2733,6 @@ const App = () => {
                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-3xl p-6 font-mono text-3xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
                              />
                            </div>
-                             <div>
-                               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2 px-1">单位成本</label>
-                               <input
-                                 type="number"
-                                 step="0.01"
-                                 value={activeSku?.unitCost ?? 0}
-                                 onChange={e => updateSku(activeSku.id, 'unitCost', clampNonNegativeNumber(e.target.value, '单位成本'))}
-                                 className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 font-mono text-xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
-                               />
-                             </div>
                            <div className="flex items-center gap-3">
                              <button
                                onClick={() => setViewMode('sales')}
@@ -4089,14 +4078,6 @@ const App = () => {
                   <div className={`absolute bottom-0 right-0 p-4 opacity-10 transform translate-x-1/4 translate-y-1/4`}>
                     <Ship size={80} />
                   </div>
-                </div>
-
-                <div className={`relative overflow-hidden rounded-2xl p-5 border transition-all hover:scale-[1.02] cursor-default ${dashboardTheme === 'dark' ? 'bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700' : 'bg-gradient-to-br from-amber-50/50 to-white border-amber-100'}`}>
-                  <div className={`text-xs font-medium mb-2 ${dashboardTheme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>预计资金占用</div>
-                  <div className={`text-3xl font-bold tracking-tight ${dashboardTheme === 'dark' ? 'text-amber-300' : 'text-amber-600'}`}>
-                    {hasUnitCost ? `¥${Math.round(poSummary.openValue/10000).toLocaleString()}w` : '未设置成本'}
-                  </div>
-                  <div className={`text-[10px] mt-1 ${dashboardTheme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>基于在途数量 * 成本</div>
                 </div>
               </div>
             </div>
