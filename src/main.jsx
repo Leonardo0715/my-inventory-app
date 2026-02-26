@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { 
   TrendingDown, Clock, Plus, AlertTriangle, BarChart3, 
   Check, X, Layout, List, RefreshCw, Save, Edit2,
-  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, Menu, ChevronLeft
+  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, Menu, ChevronLeft, Home, Compass
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -42,6 +42,7 @@ const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '').split(',').map(e 
 const DEFAULT_ADMIN_EMAILS = ADMIN_EMAILS.length > 0 ? ADMIN_EMAILS : (ALLOWED_EMAILS.length > 0 ? [ALLOWED_EMAILS[0]] : []);
 const ROLE_OPTIONS = ['admin', 'editor', 'viewer'];
 const ALL_FEATURES = [
+  { key: 'detail', label: '指挥中心' },
   { key: 'sales', label: '年度销量页' },
   { key: 'offline', label: '线下库存页' },
   { key: 'recipient-library', label: '客户信息库' },
@@ -343,7 +344,7 @@ function saveLocalMemory(key, payload) {
 
 const App = () => {
   // --- 状态管理 ---
-  const [viewMode, setViewMode] = useState('detail'); 
+  const [viewMode, setViewMode] = useState('home'); 
   const [salesSelectedYear, setSalesSelectedYear] = useState(new Date().getFullYear());
   const [selectedSkuId, setSelectedSkuId] = useState(null);
   const [skus, setSkus] = useState([]);
@@ -639,7 +640,7 @@ const App = () => {
         setSkus(localSkus);
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-      if (['detail', 'dashboard', 'sales', 'offline', 'recipient-library', 'approval'].includes(local.viewMode)) setViewMode(local.viewMode);
+      if (['home', 'detail', 'dashboard', 'sales', 'offline', 'recipient-library', 'approval'].includes(local.viewMode)) setViewMode(local.viewMode);
       // 加载本地设置
       if (local.warningDays) setWarningDays(local.warningDays);
       if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
@@ -654,8 +655,7 @@ const App = () => {
       const initialData = sanitizeSkus(DEFAULT_DATA);
       setSkus(initialData);
       setSelectedSkuId(initialData[0]?.id ?? 1);
-      setViewMode('detail');
-      // 等待 auth 状态回调，避免未认证时短暂进入主界面
+      setViewMode('home');
       console.log('✅ 使用默认数据');
     }
 
@@ -2537,7 +2537,105 @@ const App = () => {
         </div>
       )}
       <div className={viewMode === 'dashboard' ? 'bg-slate-100' : 'flex-1 flex bg-slate-100 min-h-0 overflow-hidden'}>
-      {viewMode === 'detail' ? (
+      {viewMode === 'home' ? (
+        /* --- 首页 --- */
+        <div className="flex-1 overflow-y-auto">
+          <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+            {/* 顶部栏 */}
+            <div className="bg-indigo-950 text-white px-8 py-6">
+              <div className="max-w-5xl mx-auto flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
+                    <Compass size={24} className="text-white"/>
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-black tracking-tight">智策供应链指挥系统</h1>
+                    <p className="text-indigo-300 text-xs font-bold mt-0.5">👤 {getUserNickname(user?.email)}{userRoles[currentUserEmail]?.nickname ? ` (${user?.email})` : ''}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => {
+                      if (!canManagePermissions) {
+                        setWarning('仅管理员可打开系统设置');
+                        return;
+                      }
+                      setShowSettings(true);
+                    }}
+                    className="p-2 hover:bg-indigo-800 rounded-xl transition-colors"
+                    title="系统设置"
+                  >
+                    <Settings size={18} className="text-indigo-300 hover:text-white"/>
+                  </button>
+                  <button onClick={handleLogout} className="p-2 hover:bg-red-800 rounded-xl transition-colors" title="登出">
+                    <LogOut size={18} className="text-indigo-300 hover:text-red-300"/>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 功能卡片网格 */}
+            <div className="max-w-5xl mx-auto px-8 py-10">
+              <div className="mb-8">
+                <h2 className="text-lg font-black text-slate-800 uppercase tracking-wider">功能导航</h2>
+                <p className="text-xs text-slate-500 font-medium mt-1">选择要进入的功能模块</p>
+              </div>
+
+              {(() => {
+                const navItems = [
+                  { key: 'detail', icon: <BarChart3 size={28}/>, label: '指挥中心', desc: 'SKU库存管理、销量预测、采购单跟踪', color: 'from-indigo-500 to-indigo-700', border: 'border-indigo-200', iconBg: 'bg-indigo-100 text-indigo-600' },
+                  { key: 'sales', icon: <Calendar size={28}/>, label: '年度销量', desc: '年度销量统计、月度数据分析与预估', color: 'from-slate-600 to-slate-800', border: 'border-slate-200', iconBg: 'bg-slate-100 text-slate-600' },
+                  { key: 'offline', icon: <Factory size={28}/>, label: '线下库存', desc: '线下仓库出入库管理、库存流水追踪', color: 'from-amber-500 to-amber-700', border: 'border-amber-200', iconBg: 'bg-amber-100 text-amber-600' },
+                  { key: 'recipient-library', icon: <List size={28}/>, label: '客户信息库', desc: '客户收件信息集中管理、快速调取', color: 'from-violet-500 to-violet-700', border: 'border-violet-200', iconBg: 'bg-violet-100 text-violet-600' },
+                  { key: 'approval', icon: <Lock size={28}/>, label: '审批中心', desc: '关键操作审批流程、删除请求审批', color: 'from-rose-500 to-rose-700', border: 'border-rose-200', iconBg: 'bg-rose-100 text-rose-600', badge: pendingDeleteApprovals.length },
+                  { key: 'dashboard', icon: <Layout size={28}/>, label: '全景大屏', desc: '数据可视化大屏、全局指标总览', color: 'from-emerald-500 to-emerald-700', border: 'border-emerald-200', iconBg: 'bg-emerald-100 text-emerald-600' },
+                ];
+                const available = navItems.filter(n => hasFeature(n.key));
+                if (available.length === 0) {
+                  return (
+                    <div className="text-center py-20">
+                      <div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                        <Lock size={36} className="text-slate-400"/>
+                      </div>
+                      <h3 className="text-lg font-black text-slate-600">暂无可用功能</h3>
+                      <p className="text-sm text-slate-400 mt-2">请联系管理员开通功能权限</p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {available.map(item => (
+                      <button
+                        key={item.key}
+                        onClick={() => setViewMode(item.key)}
+                        className={`group relative bg-white ${item.border} border-2 rounded-2xl p-6 text-left hover:shadow-xl hover:-translate-y-1 transition-all duration-200 active:scale-[0.98]`}
+                      >
+                        <div className={`w-14 h-14 ${item.iconBg} rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                          {item.icon}
+                        </div>
+                        <h3 className="text-base font-black text-slate-800 mb-1">{item.label}</h3>
+                        <p className="text-xs text-slate-500 font-medium leading-relaxed">{item.desc}</p>
+                        {item.badge > 0 && (
+                          <span className="absolute top-4 right-4 min-w-6 h-6 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center">
+                            {item.badge > 99 ? '99+' : item.badge}
+                          </span>
+                        )}
+                        <div className={`absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r ${item.color} rounded-b-2xl opacity-0 group-hover:opacity-100 transition-opacity`}/>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* 底部状态 */}
+              <div className="mt-10 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                <span>{memoryModeText}</span>
+                <span>权限：{currentUserRole === 'admin' ? '管理员' : currentUserRole === 'editor' ? '编辑' : '只读'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : viewMode === 'detail' ? (
         <>
           {/* 侧边栏 */}
           <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-20 flex-shrink-0 h-screen sticky top-0 self-start">
@@ -2720,6 +2818,9 @@ const App = () => {
                   </button>
                 </div>
                 <div className="flex-1 p-4 space-y-2.5 overflow-y-auto">
+                  <button onClick={() => { setViewMode('home'); setSideMenuOpen(false); }} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-indigo-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                    <Home size={18}/> 返回首页
+                  </button>
                   {hasFeature('sales') && (
                   <button onClick={() => { setViewMode('sales'); setSideMenuOpen(false); }} className="w-full bg-slate-800 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-slate-900 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                     <Calendar size={18}/> 年度销量页
@@ -2759,6 +2860,9 @@ const App = () => {
                   <p className="text-[10px] text-slate-400 mt-1 font-bold">系统已自动记住您的每一项修改</p>
                 </div>
                 <div className="flex items-center gap-3">
+                  <button onClick={() => setViewMode('home')} className="px-4 py-3 bg-white border-2 border-slate-200 text-slate-700 rounded-xl font-black flex items-center gap-2 hover:bg-slate-50 shadow-sm active:scale-95 transition-all text-[11px] tracking-wider uppercase whitespace-nowrap">
+                    <Home size={16}/> 首页
+                  </button>
                   {hasFeature('dashboard') && (
                   <button onClick={() => setViewMode('dashboard')} className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-black flex items-center gap-2 hover:bg-indigo-700 shadow-sm active:scale-95 transition-all text-[11px] tracking-wider uppercase whitespace-nowrap">
                     <Layout size={16}/> 全景大屏
@@ -3302,10 +3406,10 @@ const App = () => {
             </div>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setViewMode('detail')}
+                onClick={() => setViewMode('home')}
                 className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100"
               >
-                返回指挥中心
+                返回首页
               </button>
               {hasFeature('dashboard') && (
               <button
@@ -3499,7 +3603,7 @@ const App = () => {
             </div>
             <div className="flex items-center gap-3">
               {hasFeature('recipient-library') && <button onClick={() => setViewMode('recipient-library')} className="px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700">客户信息库</button>}
-              <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
+              <button onClick={() => setViewMode('home')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回首页</button>
               {hasFeature('dashboard') && <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>}
             </div>
           </div>
@@ -3833,7 +3937,7 @@ const App = () => {
             </div>
             <div className="flex items-center gap-3">
               {hasFeature('offline') && <button onClick={() => setViewMode('offline')} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs hover:bg-amber-700">返回线下库存</button>}
-              <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
+              <button onClick={() => setViewMode('home')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回首页</button>
             </div>
           </div>
 
@@ -3995,7 +4099,7 @@ const App = () => {
               <p className="text-xs text-slate-500 font-bold mt-1">删除、编辑等重要操作需经管理员审批后执行</p>
             </div>
             <div className="flex items-center gap-3">
-              <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
+              <button onClick={() => setViewMode('home')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回首页</button>
               {hasFeature('dashboard') && <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>}
             </div>
           </div>
@@ -4123,10 +4227,10 @@ const App = () => {
                 {dashboardTheme === 'dark' ? '☀️ 白天' : '🌙 黑夜'}
               </button>
               <button
-                onClick={() => setViewMode('detail')}
+                onClick={() => setViewMode('home')}
                 className={`px-10 py-4 rounded-[1.5rem] font-black transition-all active:scale-95 flex items-center gap-4 text-xs uppercase tracking-widest shadow-2xl border-2 ${dashboardTheme === 'dark' ? 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-white' : 'bg-white border-gray-300 hover:bg-gray-100 text-slate-900'}`}
               >
-                <List size={20}/> 返回指挥中心视角
+                <Home size={20}/> 返回首页
               </button>
             </div>
           </div>
