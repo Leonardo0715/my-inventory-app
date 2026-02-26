@@ -640,7 +640,7 @@ const App = () => {
         setSkus(localSkus);
         setSelectedSkuId((local.selectedSkuId && localSkus.some(s => s.id === local.selectedSkuId)) ? local.selectedSkuId : (localSkus[0]?.id ?? 1));
       }
-      if (['home', 'detail', 'dashboard', 'sales', 'offline', 'recipient-library', 'approval'].includes(local.viewMode)) setViewMode(local.viewMode);
+      if (['home', 'detail', 'dashboard', 'sales', 'offline', 'recipient-library', 'approval'].includes(local.viewMode)) { /* 不再恢复 viewMode，始终从首页开始 */ }
       // 加载本地设置
       if (local.warningDays) setWarningDays(local.warningDays);
       if (local.defaultSettings) setDefaultSettings(local.defaultSettings);
