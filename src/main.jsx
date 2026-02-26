@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { 
   TrendingDown, Clock, Plus, AlertTriangle, BarChart3, 
   Check, X, Layout, List, RefreshCw, Save, Edit2,
-  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock
+  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, Menu, ChevronLeft
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -404,6 +404,7 @@ const App = () => {
   const [expandedPoId, setExpandedPoId] = useState(null); // 展开的采购单ID
   const [poFilter, setPoFilter] = useState('all'); // 'all', 'pending', 'completed'
   const [dashboardTheme, setDashboardTheme] = useState('dark'); // 'dark' 或 'light'
+  const [sideMenuOpen, setSideMenuOpen] = useState(false); // 侧边抽屉菜单
   const [draggedSkuId, setDraggedSkuId] = useState(null); // 正在拖拽的 SKU ID
   const [poViewMode, setPoViewMode] = useState('card'); // 'card' 或 'table'
   const [expandedPoGroups, setExpandedPoGroups] = useState({ pending: true, completed: false }); // 按状态分组的展开/收起
@@ -2623,31 +2624,50 @@ const App = () => {
               <button onClick={addSku} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-emerald-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                 <Plus size={18}/> 新建 SKU
               </button>
-              <button onClick={() => setViewMode('sales')} className="w-full bg-slate-800 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-slate-900 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
-                <Calendar size={18}/> 年度销量页
-              </button>
-              <button onClick={() => setViewMode('offline')} className="w-full bg-amber-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-amber-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
-                <Factory size={18}/> 线下库存页
-              </button>
-              <button onClick={() => setViewMode('recipient-library')} className="w-full bg-violet-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-violet-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
-                <List size={18}/> 客户信息库
-              </button>
-              <button
-                onClick={() => {
-                  setViewMode('approval');
-                }}
-                className="w-full bg-rose-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-rose-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase relative"
-              >
-                <Lock size={18}/> 审批中心
+              <button onClick={() => setSideMenuOpen(true)} className="w-full bg-slate-700 text-white py-2.5 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-slate-800 shadow active:scale-95 transition-all text-[11px] tracking-wider uppercase relative">
+                <Menu size={16}/> 更多功能
                 {pendingDeleteApprovals.length > 0 && (
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 min-w-5 h-5 px-1 rounded-full bg-white text-rose-700 text-[10px] font-black flex items-center justify-center">
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center">
                     {pendingDeleteApprovals.length > 99 ? '99+' : pendingDeleteApprovals.length}
                   </span>
                 )}
               </button>
-
             </div>
           </div>
+
+          {/* 侧边抽屉菜单 */}
+          {sideMenuOpen && (
+            <div className="fixed inset-0 z-50 flex">
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setSideMenuOpen(false)} />
+              <div className="relative w-72 bg-white shadow-2xl flex flex-col animate-slide-in-left">
+                <div className="flex items-center justify-between px-5 py-4 border-b">
+                  <span className="font-black text-sm text-slate-800 uppercase tracking-wider">功能菜单</span>
+                  <button onClick={() => setSideMenuOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+                    <ChevronLeft size={20} className="text-slate-500"/>
+                  </button>
+                </div>
+                <div className="flex-1 p-4 space-y-2.5 overflow-y-auto">
+                  <button onClick={() => { setViewMode('sales'); setSideMenuOpen(false); }} className="w-full bg-slate-800 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-slate-900 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                    <Calendar size={18}/> 年度销量页
+                  </button>
+                  <button onClick={() => { setViewMode('offline'); setSideMenuOpen(false); }} className="w-full bg-amber-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-amber-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                    <Factory size={18}/> 线下库存页
+                  </button>
+                  <button onClick={() => { setViewMode('recipient-library'); setSideMenuOpen(false); }} className="w-full bg-violet-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-violet-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                    <List size={18}/> 客户信息库
+                  </button>
+                  <button onClick={() => { setViewMode('approval'); setSideMenuOpen(false); }} className="w-full bg-rose-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-rose-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase relative">
+                    <Lock size={18}/> 审批中心
+                    {pendingDeleteApprovals.length > 0 && (
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 min-w-5 h-5 px-1 rounded-full bg-white text-rose-700 text-[10px] font-black flex items-center justify-center">
+                        {pendingDeleteApprovals.length > 99 ? '99+' : pendingDeleteApprovals.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 主工作区 */}
           <div className="flex-1 flex flex-col min-w-0">
