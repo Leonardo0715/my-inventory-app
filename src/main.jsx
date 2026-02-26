@@ -419,6 +419,7 @@ const App = () => {
   const [draggedSkuId, setDraggedSkuId] = useState(null); // 正在拖拽的 SKU ID
   const [poViewMode, setPoViewMode] = useState('card'); // 'card' 或 'table'
   const [expandedPoGroups, setExpandedPoGroups] = useState({ pending: true, completed: false }); // 按状态分组的展开/收起
+  const [editingOfflineLog, setEditingOfflineLog] = useState(null); // 正在编辑的出库记录
 
   // 设置状态 - 运输方式（可扩展）
   const [transportModes, setTransportModes] = useState([
@@ -1489,6 +1490,24 @@ const App = () => {
 
     setOfflineTxQty('');
     setOfflineTxRemark('');
+  };
+
+  // 管理员编辑出库记录
+  const saveEditingOfflineLog = () => {
+    if (!editingOfflineLog) return;
+    const { id, ...updates } = editingOfflineLog;
+    setOfflineInventoryLogs(prev => prev.map(log => {
+      if (log.id !== id) return log;
+      return { ...log, ...updates, qty: Math.max(0, Number(updates.qty) || 0) };
+    }));
+    setEditingOfflineLog(null);
+  };
+
+  // 管理员删除出库记录
+  const deleteOfflineLog = (logId) => {
+    if (!confirm('确认删除此出库记录？此操作不可撤销。')) return;
+    setOfflineInventoryLogs(prev => prev.filter(log => log.id !== logId));
+    setEditingOfflineLog(null);
   };
 
   const offlineInventorySummary = useMemo(() => {
@@ -3902,11 +3921,12 @@ const App = () => {
                             <th className="px-4 py-3">客户 / 收件</th>
                             <th className="px-4 py-3">快递单号</th>
                             <th className="px-4 py-3">备注</th>
+                            {canManagePermissions && <th className="px-4 py-3 text-center">操作</th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y">
                           {offlineOutboundSummaryLogs.length === 0 ? (
-                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={8}>暂无出库汇总记录</td></tr>
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={canManagePermissions ? 9 : 8}>暂无出库汇总记录</td></tr>
                           ) : offlineOutboundSummaryLogs.map(log => (
                             <tr key={`out-${log.id}`} className="hover:bg-slate-50">
                               <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
@@ -3917,6 +3937,13 @@ const App = () => {
                               <td className="px-4 py-3 text-slate-600">{log.customerName ? `${log.customerPlatform || '-'} / ${log.customerName} / ${log.customerIdentity || '-'} / ${log.customerPhone || '-'} / ${log.profileAddress || '-'}` : '-'}</td>
                               <td className="px-4 py-3 text-slate-600 font-mono">{log.trackingNo || '-'}</td>
                               <td className="px-4 py-3 text-slate-500">{log.remark || '-'}</td>
+                              {canManagePermissions && (
+                                <td className="px-4 py-3 text-center">
+                                  <button onClick={() => setEditingOfflineLog({ ...log })} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 transition-colors text-[10px] font-black">
+                                    编辑
+                                  </button>
+                                </td>
+                              )}
                             </tr>
                           ))}
                         </tbody>
@@ -3927,6 +3954,95 @@ const App = () => {
               </div>
             </div>
           </div>
+
+          {/* 编辑出库记录弹窗 */}
+          {editingOfflineLog && canManagePermissions && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setEditingOfflineLog(null)}/>
+              <div className="relative bg-white rounded-2xl shadow-2xl w-[520px] max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-6 py-4 border-b">
+                  <h3 className="text-sm font-black text-slate-800">编辑出库记录</h3>
+                  <button onClick={() => setEditingOfflineLog(null)} className="p-1.5 hover:bg-slate-100 rounded-lg"><X size={16}/></button>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">SKU 名称</label>
+                      <input type="text" value={editingOfflineLog.itemName || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, itemName: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">出库数量</label>
+                      <input type="number" value={editingOfflineLog.qty || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, qty: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">用途</label>
+                      <select value={editingOfflineLog.purpose || 'normal'} onChange={e => setEditingOfflineLog(prev => ({ ...prev, purpose: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium">
+                        <option value="sample">寄样</option>
+                        <option value="normal">常规出库</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">操作账号</label>
+                      <input type="text" value={editingOfflineLog.account || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, account: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">客户名称</label>
+                      <input type="text" value={editingOfflineLog.customerName || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, customerName: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">客户平台</label>
+                      <input type="text" value={editingOfflineLog.customerPlatform || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, customerPlatform: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">客户身份</label>
+                      <input type="text" value={editingOfflineLog.customerIdentity || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, customerIdentity: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">客户电话</label>
+                      <input type="text" value={editingOfflineLog.customerPhone || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, customerPhone: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">收件地址</label>
+                    <input type="text" value={editingOfflineLog.profileAddress || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, profileAddress: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">快递单号</label>
+                      <input type="text" value={editingOfflineLog.trackingNo || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, trackingNo: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">时间</label>
+                      <input type="text" value={editingOfflineLog.happenedAt || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, happenedAt: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">备注</label>
+                    <textarea value={editingOfflineLog.remark || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, remark: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium h-16 resize-none"/>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between px-6 py-4 border-t bg-slate-50 rounded-b-2xl">
+                  <button onClick={() => deleteOfflineLog(editingOfflineLog.id)} className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-xs font-black">
+                    删除记录
+                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditingOfflineLog(null)} className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-xs font-bold">
+                      取消
+                    </button>
+                    <button onClick={saveEditingOfflineLog} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-xs font-black">
+                      保存修改
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : viewMode === 'recipient-library' ? (
         <div className="flex-1 flex flex-col p-6 bg-slate-50 min-w-0 overflow-hidden">
