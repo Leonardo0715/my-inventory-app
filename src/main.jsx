@@ -53,6 +53,19 @@ const ALL_FEATURES = [
 ];
 const ALL_FEATURE_KEYS = ALL_FEATURES.map(f => f.key);
 
+// 出库用途选项
+const PURPOSE_OPTIONS = [
+  { key: 'normal', label: '常规出库' },
+  { key: 'sample', label: '寄样' },
+  { key: 'offline_shipping', label: '线下发货' },
+  { key: 'photo', label: '拍摄领用' },
+  { key: 'return', label: '退货处理' },
+  { key: 'gift', label: '赠品' },
+  { key: 'scrap', label: '损耗报废' },
+];
+const PURPOSE_KEYS = PURPOSE_OPTIONS.map(p => p.key);
+const getPurposeLabel = (purpose) => PURPOSE_OPTIONS.find(p => p.key === purpose)?.label || purpose || '常规出库';
+
 // 🔍 诊断：输出 Firebase 配置状态
 console.log('🔍 Firebase 配置诊断：');
 console.log('  apiKey:', firebaseConfig.apiKey ? '✅ 已配置' : '❌ 缺失');
@@ -153,7 +166,7 @@ function sanitizeOfflineInventoryLogs(logs) {
       const itemId = Number.isFinite(Number(log.itemId)) ? Number(log.itemId) : null;
       const itemName = String(log.itemName ?? '');
       const type = log.type === 'out' ? 'out' : 'in';
-      const purpose = log.purpose === 'sample' ? 'sample' : (log.purpose === 'restock' ? 'restock' : 'normal');
+      const purpose = log.purpose === 'restock' ? 'restock' : (PURPOSE_KEYS.includes(log.purpose) ? log.purpose : 'normal');
       const qty = Math.max(0, Number(log.qty ?? 0) || 0);
       const account = String(log.account ?? '');
       const customerId = Number.isFinite(Number(log.customerId)) ? Number(log.customerId) : null;
@@ -1389,7 +1402,7 @@ const App = () => {
     const itemIdNum = Number(offlineTxItemId);
     const qty = Math.max(0, Number(offlineTxQty || 0) || 0);
     const txType = offlineTxType === 'out' ? 'out' : 'in';
-    const txPurpose = offlineTxPurpose === 'sample' ? 'sample' : 'normal';
+    const txPurpose = PURPOSE_KEYS.includes(offlineTxPurpose) ? offlineTxPurpose : 'normal';
     const account = String(user?.email || '').trim();
     const remark = String(offlineTxRemark || '').trim();
     const txCustomerIdNum = Number(offlineTxCustomerId);
@@ -3716,11 +3729,12 @@ const App = () => {
                   {offlineTxType === 'out' && (
                     <select
                       value={offlineTxPurpose}
-                      onChange={e => setOfflineTxPurpose(e.target.value === 'sample' ? 'sample' : 'normal')}
+                      onChange={e => setOfflineTxPurpose(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
                     >
-                      <option value="normal">用途：常规出库</option>
-                      <option value="sample">用途：寄样</option>
+                      {PURPOSE_OPTIONS.map(p => (
+                        <option key={p.key} value={p.key}>用途：{p.label}</option>
+                      ))}
                     </select>
                   )}
                   <input
@@ -3893,7 +3907,7 @@ const App = () => {
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-slate-600">
-                                {log.type === 'in' ? '补货入库' : (log.purpose === 'sample' ? '寄样' : '常规出库')}
+                                {log.type === 'in' ? '补货入库' : getPurposeLabel(log.purpose)}
                               </td>
                               <td className="px-4 py-3 text-right font-black">{Math.round(log.qty).toLocaleString()}</td>
                               <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
@@ -3931,7 +3945,7 @@ const App = () => {
                             <tr key={`out-${log.id}`} className="hover:bg-slate-50">
                               <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
                               <td className="px-4 py-3 font-bold text-slate-700">{log.itemName}</td>
-                              <td className="px-4 py-3 text-slate-600">{log.purpose === 'sample' ? '寄样' : '常规出库'}</td>
+                              <td className="px-4 py-3 text-slate-600">{getPurposeLabel(log.purpose)}</td>
                               <td className="px-4 py-3 text-right font-black text-rose-700">{Math.round(log.qty).toLocaleString()}</td>
                               <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
                               <td className="px-4 py-3 text-slate-600">{log.customerName ? `${log.customerPlatform || '-'} / ${log.customerName} / ${log.customerIdentity || '-'} / ${log.customerPhone || '-'} / ${log.profileAddress || '-'}` : '-'}</td>
@@ -3979,8 +3993,9 @@ const App = () => {
                     <div>
                       <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">用途</label>
                       <select value={editingOfflineLog.purpose || 'normal'} onChange={e => setEditingOfflineLog(prev => ({ ...prev, purpose: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium">
-                        <option value="sample">寄样</option>
-                        <option value="normal">常规出库</option>
+                        {PURPOSE_OPTIONS.map(p => (
+                          <option key={p.key} value={p.key}>{p.label}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
