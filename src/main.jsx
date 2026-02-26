@@ -472,7 +472,7 @@ const App = () => {
       const features = Array.isArray(mapped.features) ? mapped.features.filter(f => ALL_FEATURE_KEYS.includes(f)) : ALL_FEATURE_KEYS;
       return { currentUserRole: role, currentUserFeatures: features };
     }
-    return { currentUserRole: 'editor', currentUserFeatures: ALL_FEATURE_KEYS };
+    return { currentUserRole: 'editor', currentUserFeatures: [] };
   }, [currentUserEmail, userRoles]);
 
   const hasFeature = (featureKey) => currentUserRole === 'admin' || currentUserFeatures.includes(featureKey);
@@ -725,11 +725,11 @@ const App = () => {
             // 自动将 ALLOWED_EMAILS 中未注册的用户补充到 userRoles
             const merged = { ...remoteRoles };
             ALLOWED_EMAILS.forEach(e => {
-              if (!merged[e]) merged[e] = { role: DEFAULT_ADMIN_EMAILS.includes(e) ? 'admin' : 'editor', features: [...ALL_FEATURE_KEYS] };
+              if (!merged[e]) merged[e] = { role: DEFAULT_ADMIN_EMAILS.includes(e) ? 'admin' : 'editor', features: DEFAULT_ADMIN_EMAILS.includes(e) ? [...ALL_FEATURE_KEYS] : [] };
             });
             // 确保当前登录用户也在列表中
             const curEmail = (user?.email || '').toLowerCase();
-            if (curEmail && !merged[curEmail]) merged[curEmail] = { role: 'editor', features: [...ALL_FEATURE_KEYS] };
+            if (curEmail && !merged[curEmail]) merged[curEmail] = { role: 'editor', features: [] };
             setUserRoles(merged);
           }
           if (remoteData.length > 0) {
@@ -926,7 +926,7 @@ const App = () => {
     }
     setUserRoles(prev => {
       const existing = prev[normalizedEmail];
-      const prevFeatures = (existing && typeof existing === 'object' && Array.isArray(existing.features)) ? existing.features : ALL_FEATURE_KEYS;
+      const prevFeatures = (existing && typeof existing === 'object' && Array.isArray(existing.features)) ? existing.features : [];
       const prevNickname = (existing && typeof existing === 'object') ? (existing.nickname || '') : '';
       return { ...prev, [normalizedEmail]: { role, features: features !== null ? features : prevFeatures, nickname: prevNickname } };
     });
@@ -949,7 +949,7 @@ const App = () => {
     setUserRoles(prev => {
       const existing = prev[normalizedEmail];
       const role = (existing && typeof existing === 'object') ? (existing.role || 'editor') : (typeof existing === 'string' ? existing : 'editor');
-      const features = (existing && typeof existing === 'object' && Array.isArray(existing.features)) ? existing.features : ALL_FEATURE_KEYS;
+      const features = (existing && typeof existing === 'object' && Array.isArray(existing.features)) ? existing.features : [];
       return { ...prev, [normalizedEmail]: { role, features, nickname: String(nickname || '').trim() } };
     });
   };
@@ -4671,12 +4671,12 @@ const App = () => {
                       if (currentUserEmail) allEmails.add(currentUserEmail);
                       const entries = [...allEmails].sort((a, b) => a.localeCompare(b)).map(email => {
                         const roleData = userRoles[email];
-                        return [email, roleData || { role: DEFAULT_ADMIN_EMAILS.includes(email) ? 'admin' : 'editor', features: [...ALL_FEATURE_KEYS] }];
+                        return [email, roleData || { role: DEFAULT_ADMIN_EMAILS.includes(email) ? 'admin' : 'editor', features: DEFAULT_ADMIN_EMAILS.includes(email) ? [...ALL_FEATURE_KEYS] : [] }];
                       });
                       if (entries.length === 0) return <div className="text-xs text-slate-400 italic">暂无已注册用户。</div>;
                       return entries.map(([email, roleData]) => {
                           const role = (roleData && typeof roleData === 'object') ? (roleData.role || 'editor') : (typeof roleData === 'string' ? roleData : 'editor');
-                          const features = (roleData && typeof roleData === 'object' && Array.isArray(roleData.features)) ? roleData.features : ALL_FEATURE_KEYS;
+                          const features = (roleData && typeof roleData === 'object' && Array.isArray(roleData.features)) ? roleData.features : [];
                           const isAdmin = role === 'admin';
                           const isHardcodedAdmin = DEFAULT_ADMIN_EMAILS.includes(email);
                           return (
