@@ -442,6 +442,7 @@ const App = () => {
   const hydratedRef = useRef(false);
   const lastRemoteItemsJSONRef = useRef('');
   const hasPendingChangesRef = useRef(false);
+  const hasPendingSettingsRef = useRef(false);
 
   const transportOptions = transportModes.map(mode => {
     const iconMap = { sea: Ship, air: Plane, rail: Train };
@@ -717,20 +718,24 @@ const App = () => {
             console.log('⏸️ 本地有待同步更改，跳过远程数据导入');
           }
           // 加载云端设置
-          if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
-          if (docSnap.data().defaultSettings) setDefaultSettings(docSnap.data().defaultSettings);
-          if (docSnap.data().transportModes) setTransportModes(docSnap.data().transportModes);
-          if (docSnap.data().userRoles && typeof docSnap.data().userRoles === 'object') {
-            const remoteRoles = docSnap.data().userRoles;
-            // 自动将 ALLOWED_EMAILS 中未注册的用户补充到 userRoles
-            const merged = { ...remoteRoles };
-            ALLOWED_EMAILS.forEach(e => {
-              if (!merged[e]) merged[e] = { role: DEFAULT_ADMIN_EMAILS.includes(e) ? 'admin' : 'editor', features: DEFAULT_ADMIN_EMAILS.includes(e) ? [...ALL_FEATURE_KEYS] : [] };
-            });
-            // 确保当前登录用户也在列表中
-            const curEmail = (user?.email || '').toLowerCase();
-            if (curEmail && !merged[curEmail]) merged[curEmail] = { role: 'editor', features: [] };
-            setUserRoles(merged);
+          if (!hasPendingSettingsRef.current) {
+            if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
+            if (docSnap.data().defaultSettings) setDefaultSettings(docSnap.data().defaultSettings);
+            if (docSnap.data().transportModes) setTransportModes(docSnap.data().transportModes);
+            if (docSnap.data().userRoles && typeof docSnap.data().userRoles === 'object') {
+              const remoteRoles = docSnap.data().userRoles;
+              // 自动将 ALLOWED_EMAILS 中未注册的用户补充到 userRoles
+              const merged = { ...remoteRoles };
+              ALLOWED_EMAILS.forEach(e => {
+                if (!merged[e]) merged[e] = { role: DEFAULT_ADMIN_EMAILS.includes(e) ? 'admin' : 'editor', features: DEFAULT_ADMIN_EMAILS.includes(e) ? [...ALL_FEATURE_KEYS] : [] };
+              });
+              // 确保当前登录用户也在列表中
+              const curEmail = (user?.email || '').toLowerCase();
+              if (curEmail && !merged[curEmail]) merged[curEmail] = { role: 'editor', features: [] };
+              setUserRoles(merged);
+            }
+          } else {
+            console.log('⏸️ 本地有待同步的设置更改，跳过远程设置导入');
           }
           if (remoteData.length > 0) {
             setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
@@ -874,6 +879,7 @@ const App = () => {
   // --- 4.3 设置自动云端保存 ---
   useEffect(() => {
     if (!db || !user || !isInitialLoadDone || !canManagePermissions) return;
+    hasPendingSettingsRef.current = true; // 立即标记，防止 onSnapshot 覆盖本地设置
     
     const settingsTimer = setTimeout(async () => {
       try {
@@ -885,8 +891,10 @@ const App = () => {
           userRoles,
           lastUpdated: new Date().toISOString() 
         }, { merge: true });
+        hasPendingSettingsRef.current = false;
         console.log('✅ 设置自动同步到云端');
       } catch (err) {
+        hasPendingSettingsRef.current = false;
         console.error('⚠️ 设置云端同步失败:', err.message);
       }
     }, 1500);
