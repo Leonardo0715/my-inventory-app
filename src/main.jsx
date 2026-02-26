@@ -55,7 +55,6 @@ const ALL_FEATURE_KEYS = ALL_FEATURES.map(f => f.key);
 
 // 出库用途选项
 const PURPOSE_OPTIONS = [
-  { key: 'normal', label: '常规出库' },
   { key: 'sample', label: '寄样' },
   { key: 'offline_shipping', label: '线下发货' },
   { key: 'photo', label: '拍摄领用' },
@@ -64,7 +63,7 @@ const PURPOSE_OPTIONS = [
   { key: 'scrap', label: '损耗报废' },
 ];
 const PURPOSE_KEYS = PURPOSE_OPTIONS.map(p => p.key);
-const getPurposeLabel = (purpose) => PURPOSE_OPTIONS.find(p => p.key === purpose)?.label || purpose || '常规出库';
+const getPurposeLabel = (purpose) => PURPOSE_OPTIONS.find(p => p.key === purpose)?.label || purpose || '寄样';
 
 // 🔍 诊断：输出 Firebase 配置状态
 console.log('🔍 Firebase 配置诊断：');
@@ -411,7 +410,7 @@ const App = () => {
   const [offlineEditingProfileId, setOfflineEditingProfileId] = useState('');
   const [offlineTxItemId, setOfflineTxItemId] = useState('');
   const [offlineTxType, setOfflineTxType] = useState('in');
-  const [offlineTxPurpose, setOfflineTxPurpose] = useState('normal');
+  const [offlineTxPurpose, setOfflineTxPurpose] = useState('sample');
   const [offlineTxQty, setOfflineTxQty] = useState('');
   const [offlineTxRemark, setOfflineTxRemark] = useState('');
   const [offlineTxCustomerId, setOfflineTxCustomerId] = useState('');
