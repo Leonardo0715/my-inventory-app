@@ -2645,9 +2645,7 @@ const App = () => {
                   </span>
                 )}
               </button>
-              <button onClick={() => setViewMode('dashboard')} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-indigo-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
-                <Layout size={18}/> 开启战略全景大屏
-              </button>
+
             </div>
           </div>
 
@@ -2659,6 +2657,10 @@ const App = () => {
                   <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase italic">{activeSku?.name || '请选择商品'}</h1>
                   <p className="text-[10px] text-slate-400 mt-1 font-bold">系统已自动记住您的每一项修改</p>
                 </div>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setViewMode('dashboard')} className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-black flex items-center gap-2 hover:bg-indigo-700 shadow-sm active:scale-95 transition-all text-[11px] tracking-wider uppercase whitespace-nowrap">
+                    <Layout size={16}/> 全景大屏
+                  </button>
                 <div className={`px-6 py-3 rounded-xl border-2 flex items-center gap-4 shadow-sm ${activeForecast.data.some(d => d.stock <= 0) ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
                   {activeForecast.data.some(d => d.stock <= 0) ? <AlertTriangle className="text-red-500" size={28}/> : <Check className="text-emerald-500" size={28}/>}
                   <div>
@@ -2669,6 +2671,7 @@ const App = () => {
                         : '未来 365 天安全'}
                     </div>
                   </div>
+                </div>
                 </div>
               </div>
 
