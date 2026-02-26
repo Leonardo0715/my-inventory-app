@@ -41,6 +41,16 @@ const isEmailAllowed = (email) => ALLOWED_EMAILS.includes(email.toLowerCase());
 const ADMIN_EMAILS = (import.meta.env.VITE_ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 const DEFAULT_ADMIN_EMAILS = ADMIN_EMAILS.length > 0 ? ADMIN_EMAILS : (ALLOWED_EMAILS.length > 0 ? [ALLOWED_EMAILS[0]] : []);
 const ROLE_OPTIONS = ['admin', 'editor', 'viewer'];
+const ALL_FEATURES = [
+  { key: 'sales', label: '年度销量页' },
+  { key: 'offline', label: '线下库存页' },
+  { key: 'recipient-library', label: '客户信息库' },
+  { key: 'approval', label: '审批中心' },
+  { key: 'dashboard', label: '全景大屏' },
+  { key: 'po', label: '采购单管理' },
+  { key: 'sku', label: 'SKU 管理' },
+];
+const ALL_FEATURE_KEYS = ALL_FEATURES.map(f => f.key);
 
 // 🔍 诊断：输出 Firebase 配置状态
 console.log('🔍 Firebase 配置诊断：');
@@ -450,13 +460,22 @@ const App = () => {
     : (syncStatus === 'ready' ? '✅ 云端同步已启用（多人共享）' : (syncStatus === 'syncing' ? '⏳ 正在同步中...' : '⚠️ 云端连接异常：已使用本地数据'));
 
   const currentUserEmail = (user?.email || '').toLowerCase();
-  const currentUserRole = useMemo(() => {
-    if (!currentUserEmail) return 'viewer';
-    if (DEFAULT_ADMIN_EMAILS.includes(currentUserEmail)) return 'admin';
+  const { currentUserRole, currentUserFeatures } = useMemo(() => {
+    if (!currentUserEmail) return { currentUserRole: 'viewer', currentUserFeatures: [] };
+    if (DEFAULT_ADMIN_EMAILS.includes(currentUserEmail)) return { currentUserRole: 'admin', currentUserFeatures: ALL_FEATURE_KEYS };
     const mapped = userRoles[currentUserEmail];
-    if (ROLE_OPTIONS.includes(mapped)) return mapped;
-    return 'editor';
+    // 兼容旧格式 string 和新格式 { role, features }
+    if (typeof mapped === 'string') {
+      if (ROLE_OPTIONS.includes(mapped)) return { currentUserRole: mapped, currentUserFeatures: ALL_FEATURE_KEYS };
+    } else if (mapped && typeof mapped === 'object') {
+      const role = ROLE_OPTIONS.includes(mapped.role) ? mapped.role : 'editor';
+      const features = Array.isArray(mapped.features) ? mapped.features.filter(f => ALL_FEATURE_KEYS.includes(f)) : ALL_FEATURE_KEYS;
+      return { currentUserRole: role, currentUserFeatures: features };
+    }
+    return { currentUserRole: 'editor', currentUserFeatures: ALL_FEATURE_KEYS };
   }, [currentUserEmail, userRoles]);
+
+  const hasFeature = (featureKey) => currentUserRole === 'admin' || currentUserFeatures.includes(featureKey);
 
   const canEditData = currentUserRole === 'admin' || currentUserRole === 'editor';
   const canManagePermissions = currentUserRole === 'admin';
@@ -701,7 +720,18 @@ const App = () => {
           if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
           if (docSnap.data().defaultSettings) setDefaultSettings(docSnap.data().defaultSettings);
           if (docSnap.data().transportModes) setTransportModes(docSnap.data().transportModes);
-          if (docSnap.data().userRoles && typeof docSnap.data().userRoles === 'object') setUserRoles(docSnap.data().userRoles);
+          if (docSnap.data().userRoles && typeof docSnap.data().userRoles === 'object') {
+            const remoteRoles = docSnap.data().userRoles;
+            // 自动将 ALLOWED_EMAILS 中未注册的用户补充到 userRoles
+            const merged = { ...remoteRoles };
+            ALLOWED_EMAILS.forEach(e => {
+              if (!merged[e]) merged[e] = { role: DEFAULT_ADMIN_EMAILS.includes(e) ? 'admin' : 'editor', features: [...ALL_FEATURE_KEYS] };
+            });
+            // 确保当前登录用户也在列表中
+            const curEmail = (user?.email || '').toLowerCase();
+            if (curEmail && !merged[curEmail]) merged[curEmail] = { role: 'editor', features: [...ALL_FEATURE_KEYS] };
+            setUserRoles(merged);
+          }
           if (remoteData.length > 0) {
             setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
           }
@@ -884,7 +914,7 @@ const App = () => {
     }
   }, [salesYearOptions, salesSelectedYear]);
 
-  const upsertUserRole = (email, role) => {
+  const upsertUserRole = (email, role, features = null) => {
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!normalizedEmail) {
       setWarning('请输入账号邮箱');
@@ -894,9 +924,22 @@ const App = () => {
       setWarning('权限类型无效');
       return;
     }
-    setUserRoles(prev => ({ ...prev, [normalizedEmail]: role }));
+    setUserRoles(prev => {
+      const existing = prev[normalizedEmail];
+      const prevFeatures = (existing && typeof existing === 'object' && Array.isArray(existing.features)) ? existing.features : ALL_FEATURE_KEYS;
+      return { ...prev, [normalizedEmail]: { role, features: features !== null ? features : prevFeatures } };
+    });
     setRoleTargetEmail('');
     setRoleTargetValue('viewer');
+  };
+
+  const updateUserFeatures = (email, features) => {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    setUserRoles(prev => {
+      const existing = prev[normalizedEmail];
+      const role = (existing && typeof existing === 'object') ? (existing.role || 'editor') : (typeof existing === 'string' ? existing : 'editor');
+      return { ...prev, [normalizedEmail]: { role, features } };
+    });
   };
 
   const removeUserRole = (email) => {
@@ -2620,12 +2663,14 @@ const App = () => {
               ))}
             </div>
             <div className="p-4 border-t bg-slate-50 text-center flex-shrink-0 space-y-3">
+              {hasFeature('sku') && (
               <button onClick={addSku} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-emerald-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                 <Plus size={18}/> 新建 SKU
               </button>
+              )}
               <button onClick={() => setSideMenuOpen(true)} className="w-full bg-slate-700 text-white py-2.5 rounded-xl font-black flex items-center justify-center gap-2 hover:bg-slate-800 shadow active:scale-95 transition-all text-[11px] tracking-wider uppercase relative">
                 <Menu size={16}/> 更多功能
-                {pendingDeleteApprovals.length > 0 && (
+                {hasFeature('approval') && pendingDeleteApprovals.length > 0 && (
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center">
                     {pendingDeleteApprovals.length > 99 ? '99+' : pendingDeleteApprovals.length}
                   </span>
@@ -2646,15 +2691,22 @@ const App = () => {
                   </button>
                 </div>
                 <div className="flex-1 p-4 space-y-2.5 overflow-y-auto">
+                  {hasFeature('sales') && (
                   <button onClick={() => { setViewMode('sales'); setSideMenuOpen(false); }} className="w-full bg-slate-800 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-slate-900 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                     <Calendar size={18}/> 年度销量页
                   </button>
+                  )}
+                  {hasFeature('offline') && (
                   <button onClick={() => { setViewMode('offline'); setSideMenuOpen(false); }} className="w-full bg-amber-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-amber-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                     <Factory size={18}/> 线下库存页
                   </button>
+                  )}
+                  {hasFeature('recipient-library') && (
                   <button onClick={() => { setViewMode('recipient-library'); setSideMenuOpen(false); }} className="w-full bg-violet-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-violet-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
                     <List size={18}/> 客户信息库
                   </button>
+                  )}
+                  {hasFeature('approval') && (
                   <button onClick={() => { setViewMode('approval'); setSideMenuOpen(false); }} className="w-full bg-rose-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-rose-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase relative">
                     <Lock size={18}/> 审批中心
                     {pendingDeleteApprovals.length > 0 && (
@@ -2663,6 +2715,7 @@ const App = () => {
                       </span>
                     )}
                   </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -2677,9 +2730,11 @@ const App = () => {
                   <p className="text-[10px] text-slate-400 mt-1 font-bold">系统已自动记住您的每一项修改</p>
                 </div>
                 <div className="flex items-center gap-3">
+                  {hasFeature('dashboard') && (
                   <button onClick={() => setViewMode('dashboard')} className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-black flex items-center gap-2 hover:bg-indigo-700 shadow-sm active:scale-95 transition-all text-[11px] tracking-wider uppercase whitespace-nowrap">
                     <Layout size={16}/> 全景大屏
                   </button>
+                  )}
                 <div className={`px-6 py-3 rounded-xl border-2 flex items-center gap-4 shadow-sm ${activeForecast.data.some(d => d.stock <= 0) ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
                   {activeForecast.data.some(d => d.stock <= 0) ? <AlertTriangle className="text-red-500" size={28}/> : <Check className="text-emerald-500" size={28}/>}
                   <div>
@@ -2733,6 +2788,7 @@ const App = () => {
                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-3xl p-6 font-mono text-3xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
                              />
                            </div>
+                           {hasFeature('sales') && (
                            <div className="flex items-center gap-3">
                              <button
                                onClick={() => setViewMode('sales')}
@@ -2741,6 +2797,7 @@ const App = () => {
                                📊 进入年度销量统计与预估页
                              </button>
                            </div>
+                           )}
                         </div>
                      </div>
 
@@ -3221,12 +3278,14 @@ const App = () => {
               >
                 返回指挥中心
               </button>
+              {hasFeature('dashboard') && (
               <button
                 onClick={() => setViewMode('dashboard')}
                 className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700"
               >
                 战略全景大屏
               </button>
+              )}
             </div>
           </div>
 
@@ -3410,9 +3469,9 @@ const App = () => {
               <p className="text-xs text-slate-500 font-bold mt-1">管理消费者退回库存等不可回保税仓货物，独立于保税仓库存系统</p>
             </div>
             <div className="flex items-center gap-3">
-              <button onClick={() => setViewMode('recipient-library')} className="px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700">客户信息库</button>
+              {hasFeature('recipient-library') && <button onClick={() => setViewMode('recipient-library')} className="px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-xs hover:bg-violet-700">客户信息库</button>}
               <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
-              <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>
+              {hasFeature('dashboard') && <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>}
             </div>
           </div>
 
@@ -3744,7 +3803,7 @@ const App = () => {
               <p className="text-xs text-slate-500 font-bold mt-1">维护寄样所需客户信息：平台、姓名、职位/身份、手机号、地址</p>
             </div>
             <div className="flex items-center gap-3">
-              <button onClick={() => setViewMode('offline')} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs hover:bg-amber-700">返回线下库存</button>
+              {hasFeature('offline') && <button onClick={() => setViewMode('offline')} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold text-xs hover:bg-amber-700">返回线下库存</button>}
               <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
             </div>
           </div>
@@ -3908,7 +3967,7 @@ const App = () => {
             </div>
             <div className="flex items-center gap-3">
               <button onClick={() => setViewMode('detail')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回指挥中心</button>
-              <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>
+              {hasFeature('dashboard') && <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>}
             </div>
           </div>
 
@@ -4581,36 +4640,74 @@ const App = () => {
                   </div>
 
                   <div className="text-[10px] text-slate-500 font-medium">
-                    说明：`admin` 可管理权限与系统设置；`editor` 可编辑业务数据；`viewer` 仅查看。
+                    说明：`admin` 可管理权限与系统设置；`editor` 可编辑业务数据；`viewer` 仅查看。功能模块可单独开关。
                   </div>
 
-                  <div className="max-h-52 overflow-y-auto space-y-2 pt-1">
-                    {Object.keys(userRoles).length === 0 ? (
-                      <div className="text-xs text-slate-400 italic">暂未设置自定义权限，未配置账号默认按编辑权限登录（管理员邮箱除外）。</div>
-                    ) : (
-                      Object.entries(userRoles)
-                        .sort((a, b) => a[0].localeCompare(b[0]))
-                        .map(([email, role]) => (
-                          <div key={email} className="grid grid-cols-[1fr_120px_auto] gap-2 items-center bg-white border border-slate-200 rounded-lg px-3 py-2">
-                            <div className="text-xs font-medium text-slate-700 truncate">{email}</div>
-                            <select
-                              value={role}
-                              onChange={e => upsertUserRole(email, e.target.value)}
-                              className="px-2 py-1 border border-slate-300 rounded text-xs font-medium"
-                            >
-                              <option value="admin">管理员</option>
-                              <option value="editor">编辑</option>
-                              <option value="viewer">只读</option>
-                            </select>
-                            <button
-                              onClick={() => removeUserRole(email)}
-                              className="px-2 py-1 bg-red-100 text-red-600 rounded hover:bg-red-200 transition-colors text-xs font-bold"
-                            >
-                              删除
-                            </button>
-                          </div>
-                        ))
-                    )}
+                  <div className="max-h-[400px] overflow-y-auto space-y-3 pt-1">
+                    {(() => {
+                      // 合并 userRoles + ALLOWED_EMAILS，确保所有用户都显示
+                      const allEmails = new Set([...Object.keys(userRoles), ...ALLOWED_EMAILS]);
+                      if (currentUserEmail) allEmails.add(currentUserEmail);
+                      const entries = [...allEmails].sort((a, b) => a.localeCompare(b)).map(email => {
+                        const roleData = userRoles[email];
+                        return [email, roleData || { role: DEFAULT_ADMIN_EMAILS.includes(email) ? 'admin' : 'editor', features: [...ALL_FEATURE_KEYS] }];
+                      });
+                      if (entries.length === 0) return <div className="text-xs text-slate-400 italic">暂无已注册用户。</div>;
+                      return entries.map(([email, roleData]) => {
+                          const role = (roleData && typeof roleData === 'object') ? (roleData.role || 'editor') : (typeof roleData === 'string' ? roleData : 'editor');
+                          const features = (roleData && typeof roleData === 'object' && Array.isArray(roleData.features)) ? roleData.features : ALL_FEATURE_KEYS;
+                          const isAdmin = role === 'admin';
+                          const isHardcodedAdmin = DEFAULT_ADMIN_EMAILS.includes(email);
+                          return (
+                            <div key={email} className="bg-white border border-slate-200 rounded-xl px-4 py-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 text-xs font-bold text-slate-700 truncate">{email}</div>
+                                <select
+                                  value={isHardcodedAdmin ? 'admin' : role}
+                                  onChange={e => { if (!isHardcodedAdmin) upsertUserRole(email, e.target.value, features); }}
+                                  disabled={isHardcodedAdmin}
+                                  className={`px-2 py-1 border border-slate-300 rounded text-xs font-medium ${isHardcodedAdmin ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                >
+                                  <option value="admin">管理员</option>
+                                  <option value="editor">编辑</option>
+                                  <option value="viewer">只读</option>
+                                </select>
+                                {!DEFAULT_ADMIN_EMAILS.includes(email) && (
+                                <button
+                                  onClick={() => removeUserRole(email)}
+                                  className="px-2 py-1 bg-red-100 text-red-600 rounded hover:bg-red-200 transition-colors text-xs font-bold"
+                                >
+                                  移除
+                                </button>
+                                )}
+                              </div>
+                              {!isAdmin && (
+                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                  {ALL_FEATURES.map(f => {
+                                    const checked = features.includes(f.key);
+                                    return (
+                                      <label key={f.key} className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer border transition-colors ${checked ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() => {
+                                            const next = checked ? features.filter(k => k !== f.key) : [...features, f.key];
+                                            updateUserFeatures(email, next);
+                                          }}
+                                          className="w-3 h-3 accent-indigo-600"
+                                        />
+                                        {f.label}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              {isAdmin && <div className="text-[10px] text-emerald-600 font-medium">管理员拥有全部功能权限</div>}
+                              {isHardcodedAdmin && <div className="text-[10px] text-blue-500 font-medium">🔒 系统预设管理员</div>}
+                            </div>
+                          );
+                        });
+                    })()}
                   </div>
 
                 </div>
