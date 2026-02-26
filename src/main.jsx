@@ -927,7 +927,8 @@ const App = () => {
     setUserRoles(prev => {
       const existing = prev[normalizedEmail];
       const prevFeatures = (existing && typeof existing === 'object' && Array.isArray(existing.features)) ? existing.features : ALL_FEATURE_KEYS;
-      return { ...prev, [normalizedEmail]: { role, features: features !== null ? features : prevFeatures } };
+      const prevNickname = (existing && typeof existing === 'object') ? (existing.nickname || '') : '';
+      return { ...prev, [normalizedEmail]: { role, features: features !== null ? features : prevFeatures, nickname: prevNickname } };
     });
     setRoleTargetEmail('');
     setRoleTargetValue('viewer');
@@ -938,8 +939,28 @@ const App = () => {
     setUserRoles(prev => {
       const existing = prev[normalizedEmail];
       const role = (existing && typeof existing === 'object') ? (existing.role || 'editor') : (typeof existing === 'string' ? existing : 'editor');
-      return { ...prev, [normalizedEmail]: { role, features } };
+      const nickname = (existing && typeof existing === 'object') ? (existing.nickname || '') : '';
+      return { ...prev, [normalizedEmail]: { role, features, nickname } };
     });
+  };
+
+  const updateUserNickname = (email, nickname) => {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    setUserRoles(prev => {
+      const existing = prev[normalizedEmail];
+      const role = (existing && typeof existing === 'object') ? (existing.role || 'editor') : (typeof existing === 'string' ? existing : 'editor');
+      const features = (existing && typeof existing === 'object' && Array.isArray(existing.features)) ? existing.features : ALL_FEATURE_KEYS;
+      return { ...prev, [normalizedEmail]: { role, features, nickname: String(nickname || '').trim() } };
+    });
+  };
+
+  // 根据邮箱获取备注名（优先备注，否则邮箱）
+  const getUserNickname = (email) => {
+    if (!email) return '';
+    const normalized = String(email).trim().toLowerCase();
+    const data = userRoles[normalized];
+    if (data && typeof data === 'object' && data.nickname) return data.nickname;
+    return normalized;
   };
 
   const removeUserRole = (email) => {
@@ -2536,7 +2557,7 @@ const App = () => {
               <div className="flex flex-col gap-2">
                 <div>
                   <p className="text-xs text-indigo-300 font-bold uppercase tracking-widest italic">{memoryModeText}</p>
-                  <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider mt-1 break-words">👤 {user?.email}</p>
+                  <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider mt-1 break-words">👤 {getUserNickname(user?.email)}{userRoles[currentUserEmail]?.nickname ? ` (${user?.email})` : ''}</p>
                   <p className="text-[10px] text-indigo-300 font-black mt-1">权限：{currentUserRole === 'admin' ? '管理员' : currentUserRole === 'editor' ? '编辑' : '只读'}</p>
                 </div>
                 <div className={`px-2.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap inline-block ${
@@ -3631,7 +3652,7 @@ const App = () => {
                     onClick={recordOfflineInventoryTx}
                     className="w-full bg-amber-600 text-white py-2.5 rounded-lg font-black text-xs hover:bg-amber-700"
                   >
-                    记录本次{offlineTxType === 'in' ? '入库' : '出库'}（账号：{String(user?.email || '未登录')})
+                    记录本次{offlineTxType === 'in' ? '入库' : '出库'}（操作人：{getUserNickname(user?.email) || '未登录'})
                   </button>
                   {offlineTxType === 'out' && offlineTxPurpose === 'sample' && (
                     <div className="text-[10px] text-slate-500 font-medium bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
@@ -3986,7 +4007,7 @@ const App = () => {
                   ) : pendingDeleteApprovals.map(item => (
                     <div key={item.id} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 space-y-1">
                       <div className="text-xs font-black text-slate-700 truncate">{getDeleteActionLabel(item.actionType)} · {item.entityName || '-'}</div>
-                      <div className="text-[10px] text-slate-500 font-medium">申请人：{item.requestedBy || '-'} · {new Date(item.requestedAt).toLocaleString()}</div>
+                      <div className="text-[10px] text-slate-500 font-medium">申请人：{getUserNickname(item.requestedBy) || '-'} · {new Date(item.requestedAt).toLocaleString()}</div>
                       <div className="flex items-center gap-2 pt-1">
                         <button
                           onClick={() => reviewDeleteApproval(item.id, 'approved')}
@@ -4023,8 +4044,8 @@ const App = () => {
                           {item.status === 'approved' ? '已通过' : '已驳回'}
                         </span>
                       </div>
-                      <div className="text-[10px] text-slate-500 font-medium">申请：{item.requestedBy || '-'} · {new Date(item.requestedAt).toLocaleString()}</div>
-                      <div className="text-[10px] text-slate-400 font-medium">审批：{item.reviewedBy || '-'} · {item.reviewedAt ? new Date(item.reviewedAt).toLocaleString() : '-'}</div>
+                      <div className="text-[10px] text-slate-500 font-medium">申请：{getUserNickname(item.requestedBy) || '-'} · {new Date(item.requestedAt).toLocaleString()}</div>
+                      <div className="text-[10px] text-slate-400 font-medium">审批：{getUserNickname(item.reviewedBy) || '-'} · {item.reviewedAt ? new Date(item.reviewedAt).toLocaleString() : '-'}</div>
                     </div>
                   ))}
                 </div>
@@ -4661,7 +4682,14 @@ const App = () => {
                           return (
                             <div key={email} className="bg-white border border-slate-200 rounded-xl px-4 py-3 space-y-2">
                               <div className="flex items-center gap-2">
-                                <div className="flex-1 text-xs font-bold text-slate-700 truncate">{email}</div>
+                                <input
+                                  type="text"
+                                  value={(roleData && typeof roleData === 'object') ? (roleData.nickname || '') : ''}
+                                  onChange={e => updateUserNickname(email, e.target.value)}
+                                  placeholder="备注名"
+                                  className="w-20 px-2 py-1 border border-slate-200 rounded text-xs font-bold text-indigo-700 bg-indigo-50 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400"
+                                />
+                                <div className="flex-1 text-xs font-medium text-slate-500 truncate">{email}</div>
                                 <select
                                   value={isHardcodedAdmin ? 'admin' : role}
                                   onChange={e => { if (!isHardcodedAdmin) upsertUserRole(email, e.target.value, features); }}
