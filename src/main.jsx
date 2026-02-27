@@ -652,6 +652,69 @@ const App = () => {
   };
 
   // --- 3.0 本地数据初始化（仅一次） ---
+
+  // 🔧 管理员专用：从备份 JSON 恢复数据到云端
+  const restoreFromBackup = async (jsonText) => {
+    if (!canManagePermissions) { setWarning('仅管理员可执行数据恢复'); return; }
+    if (!db || !user) { setWarning('未连接云端，无法恢复'); return; }
+    try {
+      const data = typeof jsonText === 'string' ? JSON.parse(jsonText) : jsonText;
+      if (!data || !Array.isArray(data.skus) || data.skus.length === 0) {
+        setWarning('备份数据无效：缺少 skus 数组'); return;
+      }
+      const restoredSkus = sanitizeSkus(data.skus);
+      const restoredOfflineItems = sanitizeOfflineInventoryItems(data.offlineInventoryItems || []);
+      const restoredOfflineLogs = sanitizeOfflineInventoryLogs(data.offlineInventoryLogs || []);
+      const restoredRecipientDir = sanitizeRecipientDirectory(data.offlineRecipientDirectory || []);
+      const restoredApprovals = sanitizeDeleteApprovals(data.deleteApprovals || []);
+
+      // 恢复到 React 状态
+      setSkus(restoredSkus);
+      setOfflineInventoryItems(restoredOfflineItems);
+      setOfflineInventoryLogs(restoredOfflineLogs);
+      setOfflineRecipientDirectory(restoredRecipientDir);
+      setDeleteApprovals(restoredApprovals);
+      if (data.warningDays) setWarningDays(data.warningDays);
+      if (data.defaultSettings) setDefaultSettings(data.defaultSettings);
+      if (data.transportModes) setTransportModes(data.transportModes);
+      if (data.userRoles && typeof data.userRoles === 'object') setUserRoles(data.userRoles);
+      setSelectedSkuId(restoredSkus[0]?.id ?? 1);
+
+      // 强制写入云端
+      const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
+      const payload = {
+        items: cleanUndefinedValues(restoredSkus),
+        offlineInventoryItems: cleanUndefinedValues(restoredOfflineItems),
+        offlineInventoryLogs: cleanUndefinedValues(restoredOfflineLogs),
+        offlineRecipientDirectory: cleanUndefinedValues(restoredRecipientDir),
+        deleteApprovals: cleanUndefinedValues(restoredApprovals),
+        warningDays: data.warningDays || warningDays,
+        defaultSettings: data.defaultSettings || defaultSettings,
+        transportModes: data.transportModes || transportModes,
+        userRoles: data.userRoles || userRoles,
+        lastUpdated: new Date().toISOString(),
+      };
+      await setDoc(docRef, payload, { merge: true });
+
+      // 更新同步快照
+      lastRemoteItemsJSONRef.current = JSON.stringify({
+        items: sanitizeSkus(payload.items),
+        offlineInventoryItems: sanitizeOfflineInventoryItems(payload.offlineInventoryItems),
+        offlineInventoryLogs: sanitizeOfflineInventoryLogs(payload.offlineInventoryLogs),
+        offlineRecipientDirectory: sanitizeRecipientDirectory(payload.offlineRecipientDirectory),
+        deleteApprovals: sanitizeDeleteApprovals(payload.deleteApprovals),
+      });
+      cloudDataLoadedRef.current = true;
+      hasPendingChangesRef.current = false;
+
+      setWarning('✅ 数据恢复成功！已同步到云端。');
+      console.log('✅ 数据恢复完成：', restoredSkus.length, 'SKU,', restoredOfflineItems.length, '线下品项,', restoredOfflineLogs.length, '出入库记录');
+    } catch (err) {
+      console.error('❌ 数据恢复失败:', err);
+      setWarning('❌ 数据恢复失败: ' + err.message);
+    }
+  };
+
   useEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
@@ -5009,6 +5072,36 @@ const App = () => {
 
                 </div>
               </div>
+
+              {/* 数据恢复（管理员） */}
+              {canManagePermissions && (
+              <div className="space-y-4">
+                <h4 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                  <AlertTriangle size={20} className="text-orange-600"/> 数据备份与恢复（管理员）
+                </h4>
+                <div className="bg-orange-50 p-4 rounded-2xl border border-orange-200 space-y-3">
+                  <div className="text-[10px] text-orange-700 font-bold">
+                    从 localStorage 备份的 JSON 恢复全部数据到云端。恢复后会覆盖当前云端数据，请确认备份文件正确。
+                  </div>
+                  <textarea
+                    id="restoreJsonInput"
+                    placeholder="粘贴备份 JSON 数据到此处..."
+                    className="w-full px-3 py-2 border border-orange-300 rounded-lg text-xs font-mono h-24 resize-none focus:outline-none focus:border-orange-500"
+                  />
+                  <button
+                    onClick={() => {
+                      const input = document.getElementById('restoreJsonInput');
+                      if (!input?.value?.trim()) { setWarning('请先粘贴备份 JSON 数据'); return; }
+                      if (!window.confirm('⚠️ 确定要用备份数据覆盖当前云端数据吗？此操作不可撤销。')) return;
+                      restoreFromBackup(input.value.trim());
+                    }}
+                    className="w-full px-3 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-xs font-black"
+                  >
+                    🔄 从备份恢复数据到云端
+                  </button>
+                </div>
+              </div>
+              )}
 
               {/* 预警时间设置 */}
               <div className="space-y-4">
