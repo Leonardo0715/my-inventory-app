@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 
 /**
  * 智策供应链全景指挥系统 - 旗舰记忆增强版
@@ -626,8 +626,93 @@ const App = () => {
     }
   };
 
+  // 🔄 自动备份：将当前数据写入 Firestore 独立备份文档
+  const saveBackupToCloud = async (trigger = 'manual') => {
+    if (!db || !user) { console.warn('⚠️ 备份跳过：未连接云端'); return false; }
+    if (skus.length === 0) { console.warn('⚠️ 备份跳过：数据为空'); return false; }
+    try {
+      const backupDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
+      const clean = (obj) => {
+        if (Array.isArray(obj)) return obj.map(clean);
+        if (obj !== null && typeof obj === 'object') {
+          return Object.fromEntries(
+            Object.entries(obj).filter(([, v]) => v !== undefined).map(([k, v]) => [k, clean(v)])
+          );
+        }
+        return obj;
+      };
+      const backupPayload = {
+        items: clean(skus),
+        offlineInventoryItems: clean(offlineInventoryItems),
+        offlineInventoryLogs: clean(offlineInventoryLogs),
+        offlineRecipientDirectory: clean(offlineRecipientDirectory),
+        deleteApprovals: clean(deleteApprovals),
+        warningDays,
+        defaultSettings,
+        transportModes,
+        userRoles,
+        _backup_meta: {
+          trigger,
+          userEmail: user.email || '未知',
+          timestamp: new Date().toISOString(),
+          skuCount: skus.length,
+          offlineItemCount: offlineInventoryItems.length,
+          logCount: offlineInventoryLogs.length,
+          approvalCount: deleteApprovals.length,
+        },
+      };
+      await setDoc(backupDocRef, backupPayload);
+      const info = `${new Date().toLocaleString('zh-CN')} (${trigger === 'login' ? '上线' : trigger === 'logout' ? '下线' : '手动'}) by ${user.email}`;
+      setLastBackupInfo(info);
+      console.log('💾 自动备份成功:', info, '| SKU:', skus.length, '| 线下品项:', offlineInventoryItems.length, '| 日志:', offlineInventoryLogs.length);
+      return true;
+    } catch (err) {
+      console.error('❌ 自动备份失败:', err.message);
+      return false;
+    }
+  };
+
+  // 🔄 从云端备份恢复
+  const restoreFromCloudBackup = async () => {
+    if (!canManagePermissions) { window.alert('❌ 仅管理员可执行数据恢复'); return; }
+    if (!db || !user) { window.alert('❌ 未连接云端'); return; }
+    try {
+      const backupDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
+      const backupSnap = await getDoc(backupDocRef);
+      if (!backupSnap.exists()) {
+        window.alert('❌ 云端没有找到备份数据');
+        return;
+      }
+      const backupData = backupSnap.data();
+      const meta = backupData._backup_meta || {};
+      const confirmMsg = `找到云端备份：\n\n📅 时间：${meta.timestamp || '未知'}\n👤 操作者：${meta.userEmail || '未知'}\n📦 触发方式：${meta.trigger === 'login' ? '上线' : meta.trigger === 'logout' ? '下线' : meta.trigger || '未知'}\n\n📊 SKU: ${meta.skuCount || '?'} 个\n📦 线下品项: ${meta.offlineItemCount || '?'} 个\n📝 日志: ${meta.logCount || '?'} 条\n✅ 审批: ${meta.approvalCount || '?'} 条\n\n确定要用此备份恢复吗？`;
+      if (!window.confirm(confirmMsg)) return;
+      // 复用 restoreFromBackup，传入数据对象
+      const jsonForRestore = JSON.stringify({
+        skus: backupData.items || [],
+        offlineInventoryItems: backupData.offlineInventoryItems || [],
+        offlineInventoryLogs: backupData.offlineInventoryLogs || [],
+        offlineRecipientDirectory: backupData.offlineRecipientDirectory || [],
+        deleteApprovals: backupData.deleteApprovals || [],
+        warningDays: backupData.warningDays,
+        defaultSettings: backupData.defaultSettings,
+        transportModes: backupData.transportModes,
+        userRoles: backupData.userRoles,
+      });
+      await restoreFromBackup(jsonForRestore);
+    } catch (err) {
+      console.error('❌ 从云端备份恢复失败:', err);
+      window.alert('❌ 从云端备份恢复失败: ' + err.message);
+    }
+  };
+
   const handleLogout = async () => {
     try {
+      // 💾 下线前自动备份
+      if (skus.length > 0 && db && user) {
+        console.log('💾 登出前执行自动备份...');
+        await saveBackupToCloud('logout');
+      }
       await signOut(auth);
       console.log('✅ 登出成功');
       // 🔒 完全重置所有数据状态和同步标记，防止下一个用户登录时旧数据覆盖云端
@@ -641,10 +726,12 @@ const App = () => {
       cloudDataLoadedRef.current = false;
       hasPendingChangesRef.current = false;
       hasPendingSettingsRef.current = false;
+      hasBackedUpOnLoginRef.current = false;
       lastRemoteItemsJSONRef.current = '';
       setLoginEmail('');
       setLoginPassword('');
       setLoginError('');
+      setLastBackupInfo(null);
     } catch (err) {
       console.error('❌ 登出失败:', err.message);
       setLoginError('登出失败，请重试');
@@ -867,6 +954,12 @@ const App = () => {
           // 🔒 标记：已成功接收到云端数据，后续才允许云端写入
           cloudDataLoadedRef.current = true;
           console.log('🔒 cloudDataLoadedRef = true，允许云端写入');
+          // 💾 上线时自动备份（仅首次接收云端数据时触发一次）
+          if (!hasBackedUpOnLoginRef.current && remoteData.length > 0) {
+            hasBackedUpOnLoginRef.current = true;
+            // 延迟执行，确保 React 状态已更新
+            setTimeout(() => saveBackupToCloud('login'), 2000);
+          }
           // 加载云端设置
           if (!hasPendingSettingsRef.current) {
             if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
@@ -5137,14 +5230,44 @@ const App = () => {
                 </div>
               </div>
 
-              {/* 数据恢复（管理员） */}
+              {/* 数据备份与恢复（管理员） */}
               {canManagePermissions && (
               <div className="space-y-4">
                 <h4 className="text-lg font-black text-slate-800 flex items-center gap-2">
                   <AlertTriangle size={20} className="text-orange-600"/> 数据备份与恢复（管理员）
                 </h4>
+
+                {/* 自动备份状态 */}
+                <div className="bg-green-50 p-4 rounded-2xl border border-green-200 space-y-3">
+                  <div className="text-xs font-bold text-green-800">💾 云端自动备份</div>
+                  <div className="text-[10px] text-green-700">
+                    系统会在每个用户<b>上线</b>和<b>下线</b>时自动保存一份完整数据备份到云端独立文档，覆盖上一次备份。
+                  </div>
+                  {lastBackupInfo && (
+                    <div className="text-[10px] text-green-600 bg-green-100 px-2 py-1 rounded">
+                      📋 最近备份: {lastBackupInfo}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => saveBackupToCloud('manual').then(ok => ok && window.alert('✅ 手动备份成功！'))}
+                      className="flex-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-xs font-black"
+                    >
+                      💾 立即手动备份
+                    </button>
+                    <button
+                      onClick={restoreFromCloudBackup}
+                      className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-black"
+                    >
+                      📥 从云端备份恢复
+                    </button>
+                  </div>
+                </div>
+
+                {/* 手动 JSON 恢复 */}
                 <div className="bg-orange-50 p-4 rounded-2xl border border-orange-200 space-y-3">
-                  <div className="text-[10px] text-orange-700 font-bold">
+                  <div className="text-xs font-bold text-orange-800">📝 手动 JSON 恢复</div>
+                  <div className="text-[10px] text-orange-700">
                     从 localStorage 备份的 JSON 恢复全部数据到云端。恢复后会覆盖当前云端数据，请确认备份文件正确。
                   </div>
                   <textarea
@@ -5161,7 +5284,7 @@ const App = () => {
                     }}
                     className="w-full px-3 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-xs font-black"
                   >
-                    🔄 从备份恢复数据到云端
+                    🔄 从 JSON 恢复数据到云端
                   </button>
                 </div>
               </div>
