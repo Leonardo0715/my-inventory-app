@@ -457,6 +457,8 @@ const App = () => {
   const lastRemoteItemsJSONRef = useRef('');
   const hasPendingChangesRef = useRef(false);
   const hasPendingSettingsRef = useRef(false);
+  // 🔒 核心防护：只有成功接收过云端数据后才允许写回云端
+  const cloudDataLoadedRef = useRef(false);
 
   const transportOptions = transportModes.map(mode => {
     const iconMap = { sea: Ship, air: Plane, rail: Train };
@@ -628,8 +630,18 @@ const App = () => {
     try {
       await signOut(auth);
       console.log('✅ 登出成功');
+      // 🔒 完全重置所有数据状态和同步标记，防止下一个用户登录时旧数据覆盖云端
       setSkus([]);
       setSelectedSkuId(null);
+      setOfflineInventoryItems([]);
+      setOfflineInventoryLogs([]);
+      setOfflineRecipientDirectory([]);
+      setDeleteApprovals([]);
+      setIsInitialLoadDone(false);
+      cloudDataLoadedRef.current = false;
+      hasPendingChangesRef.current = false;
+      hasPendingSettingsRef.current = false;
+      lastRemoteItemsJSONRef.current = '';
       setLoginEmail('');
       setLoginPassword('');
       setLoginError('');
@@ -730,6 +742,9 @@ const App = () => {
             lastRemoteItemsJSONRef.current = remoteJSON;
             console.log('⏸️ 本地有待同步更改，跳过远程数据导入');
           }
+          // 🔒 标记：已成功接收到云端数据，后续才允许云端写入
+          cloudDataLoadedRef.current = true;
+          console.log('🔒 cloudDataLoadedRef = true，允许云端写入');
           // 加载云端设置
           if (!hasPendingSettingsRef.current) {
             if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
@@ -796,6 +811,7 @@ const App = () => {
                 offlineRecipientDirectory: bootstrapRecipientDirectory,
                 deleteApprovals: bootstrapDeleteApprovals,
               });
+              cloudDataLoadedRef.current = true; // 初始化成功后允许后续同步
               console.log('✅ 云端初始化成功');
             })
             .catch((e) => {
@@ -814,11 +830,18 @@ const App = () => {
         console.log('  2. Firestore 数据库未创建?');
         console.log('  3. 集合路径错误?');
         setSyncStatus('error');
-        setIsInitialLoadDone(true); // 允许继续本地使用
+        // 🔒 注意：这里只设 isInitialLoadDone 允许本地使用，但 cloudDataLoadedRef 保持 false
+        // 这样即使本地有默认数据，也不会覆盖云端真实数据
+        setIsInitialLoadDone(true); // 允许继续本地浏览
+        console.warn('⚠️ cloudDataLoadedRef 保持 false，禁止云端写入，防止空数据覆盖');
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      // 用户切换时重置云端数据标记，确保新用户需要重新接收云端数据
+      cloudDataLoadedRef.current = false;
+    };
   }, [user, db, appId, localKey]);
 
   // --- 4.1 本地兜底自动存档（始终开启） ---
@@ -847,8 +870,12 @@ const App = () => {
 
   useEffect(() => {
     if (!db || !user) return;
-    // 防丢保护：必须完成初始读取、且数据不为空才允许写回
+    // 🔒 防丢保护：必须完成初始读取、成功接收过云端数据、且数据不为空才允许写回
     if (!isInitialLoadDone || skus.length === 0) return;
+    if (!cloudDataLoadedRef.current) {
+      console.log('⏸️ 尚未成功接收云端数据，跳过云端写入（防止空数据覆盖）');
+      return;
+    }
 
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
     const localJSON = JSON.stringify({ items: skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals });
