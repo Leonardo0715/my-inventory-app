@@ -6,7 +6,7 @@ import {
   Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, Menu, ChevronLeft, Home, Compass
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 
 /**
@@ -91,7 +91,9 @@ try {
     console.log('🚀 正在初始化 Firebase...');
     const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
     auth = getAuth(app);
-    console.log('✅ Firebase Auth 初始化成功');
+    // 🔒 设置会话级别登录持久化：关闭浏览器标签页后需重新登录
+    setPersistence(auth, browserSessionPersistence).catch(e => console.warn('⚠️ setPersistence 失败:', e.message));
+    console.log('✅ Firebase Auth 初始化成功（会话级持久化）');
 
     // ✅ 关键增强：支持指定 Firestore 数据库 ID（多数据库场景）
     // - 绝大多数 Firebase 项目是默认库，无需配置
