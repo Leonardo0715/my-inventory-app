@@ -654,21 +654,91 @@ const App = () => {
   // --- 3.0 本地数据初始化（仅一次） ---
 
   // 🔧 管理员专用：从备份 JSON 恢复数据到云端
+  const isRestoringRef = useRef(false);
   const restoreFromBackup = async (jsonText) => {
-    if (!canManagePermissions) { setWarning('仅管理员可执行数据恢复'); return; }
-    if (!db || !user) { setWarning('未连接云端，无法恢复'); return; }
+    if (!canManagePermissions) { window.alert('❌ 仅管理员可执行数据恢复'); return; }
+    if (!db || !user) { window.alert('❌ 未连接云端，无法恢复'); return; }
+    if (isRestoringRef.current) { window.alert('⏳ 恢复正在进行中，请稍候'); return; }
+
     try {
-      const data = typeof jsonText === 'string' ? JSON.parse(jsonText) : jsonText;
-      if (!data || !Array.isArray(data.skus) || data.skus.length === 0) {
-        setWarning('备份数据无效：缺少 skus 数组'); return;
+      isRestoringRef.current = true;
+      console.log('🔄 开始恢复数据... 输入长度:', jsonText.length);
+
+      // -------- 1. 解析 JSON --------
+      let data;
+      try {
+        data = typeof jsonText === 'string' ? JSON.parse(jsonText) : jsonText;
+      } catch (parseErr) {
+        window.alert('❌ JSON 解析失败，请检查粘贴的内容是否完整。\n\n错误：' + parseErr.message);
+        return;
       }
-      const restoredSkus = sanitizeSkus(data.skus);
+
+      // 兼容两种格式：localStorage 格式 (skus) 和 Firestore 格式 (items)
+      const rawSkus = data.skus || data.items || [];
+      if (!Array.isArray(rawSkus) || rawSkus.length === 0) {
+        window.alert('❌ 备份数据无效：找不到 skus/items 数组，或数组为空。\n\n检测到的顶级字段: ' + Object.keys(data).join(', '));
+        return;
+      }
+
+      console.log('📋 解析成功，顶级字段:', Object.keys(data).join(', '));
+
+      // -------- 2. 清洗数据 --------
+      const restoredSkus = sanitizeSkus(rawSkus);
       const restoredOfflineItems = sanitizeOfflineInventoryItems(data.offlineInventoryItems || []);
       const restoredOfflineLogs = sanitizeOfflineInventoryLogs(data.offlineInventoryLogs || []);
       const restoredRecipientDir = sanitizeRecipientDirectory(data.offlineRecipientDirectory || []);
       const restoredApprovals = sanitizeDeleteApprovals(data.deleteApprovals || []);
 
-      // 恢复到 React 状态
+      console.log('📋 清洗完毕:', restoredSkus.length, 'SKU,', restoredOfflineItems.length, '线下品项,', restoredOfflineLogs.length, '日志,', restoredApprovals.length, '审批');
+
+      // -------- 3. 先写入云端（防止 onSnapshot 竞争） --------
+      // 锁住：阻止 onSnapshot 和自动保存 effect 干扰
+      hasPendingChangesRef.current = true;
+      hasPendingSettingsRef.current = true;
+
+      const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
+
+      // 递归清除 undefined（Firestore 不支持）
+      const clean = (obj) => {
+        if (Array.isArray(obj)) return obj.map(clean);
+        if (obj !== null && typeof obj === 'object') {
+          return Object.fromEntries(
+            Object.entries(obj).filter(([, v]) => v !== undefined).map(([k, v]) => [k, clean(v)])
+          );
+        }
+        return obj;
+      };
+
+      const payload = {
+        items: clean(restoredSkus),
+        offlineInventoryItems: clean(restoredOfflineItems),
+        offlineInventoryLogs: clean(restoredOfflineLogs),
+        offlineRecipientDirectory: clean(restoredRecipientDir),
+        deleteApprovals: clean(restoredApprovals),
+        warningDays: data.warningDays || warningDays,
+        defaultSettings: data.defaultSettings || defaultSettings,
+        transportModes: data.transportModes || transportModes,
+        userRoles: data.userRoles || userRoles,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      console.log('🚀 正在写入 Firestore...', 'inventory_apps/' + appId + '/shared/main');
+
+      // 在写入前先更新快照引用，防止 onSnapshot 竞争覆盖
+      const snapshotJSON = JSON.stringify({
+        items: sanitizeSkus(payload.items),
+        offlineInventoryItems: sanitizeOfflineInventoryItems(payload.offlineInventoryItems),
+        offlineInventoryLogs: sanitizeOfflineInventoryLogs(payload.offlineInventoryLogs),
+        offlineRecipientDirectory: sanitizeRecipientDirectory(payload.offlineRecipientDirectory),
+        deleteApprovals: sanitizeDeleteApprovals(payload.deleteApprovals),
+      });
+      lastRemoteItemsJSONRef.current = snapshotJSON;
+
+      await setDoc(docRef, payload, { merge: true });
+
+      console.log('✅ Firestore 写入成功！');
+
+      // -------- 4. 更新 React 状态 --------
       setSkus(restoredSkus);
       setOfflineInventoryItems(restoredOfflineItems);
       setOfflineInventoryLogs(restoredOfflineLogs);
@@ -680,38 +750,27 @@ const App = () => {
       if (data.userRoles && typeof data.userRoles === 'object') setUserRoles(data.userRoles);
       setSelectedSkuId(restoredSkus[0]?.id ?? 1);
 
-      // 强制写入云端
-      const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
-      const payload = {
-        items: cleanUndefinedValues(restoredSkus),
-        offlineInventoryItems: cleanUndefinedValues(restoredOfflineItems),
-        offlineInventoryLogs: cleanUndefinedValues(restoredOfflineLogs),
-        offlineRecipientDirectory: cleanUndefinedValues(restoredRecipientDir),
-        deleteApprovals: cleanUndefinedValues(restoredApprovals),
-        warningDays: data.warningDays || warningDays,
-        defaultSettings: data.defaultSettings || defaultSettings,
-        transportModes: data.transportModes || transportModes,
-        userRoles: data.userRoles || userRoles,
-        lastUpdated: new Date().toISOString(),
-      };
-      await setDoc(docRef, payload, { merge: true });
-
-      // 更新同步快照
-      lastRemoteItemsJSONRef.current = JSON.stringify({
-        items: sanitizeSkus(payload.items),
-        offlineInventoryItems: sanitizeOfflineInventoryItems(payload.offlineInventoryItems),
-        offlineInventoryLogs: sanitizeOfflineInventoryLogs(payload.offlineInventoryLogs),
-        offlineRecipientDirectory: sanitizeRecipientDirectory(payload.offlineRecipientDirectory),
-        deleteApprovals: sanitizeDeleteApprovals(payload.deleteApprovals),
-      });
+      // -------- 5. 标记完成 --------
       cloudDataLoadedRef.current = true;
-      hasPendingChangesRef.current = false;
+      // 延迟解锁，确保 React 渲染完毕后自动保存不会立即触发冲突
+      setTimeout(() => {
+        hasPendingChangesRef.current = false;
+        hasPendingSettingsRef.current = false;
+        isRestoringRef.current = false;
+      }, 3000);
 
-      setWarning('✅ 数据恢复成功！已同步到云端。');
-      console.log('✅ 数据恢复完成：', restoredSkus.length, 'SKU,', restoredOfflineItems.length, '线下品项,', restoredOfflineLogs.length, '出入库记录');
+      const msg = `✅ 数据恢复成功！\n\n${restoredSkus.length} 个 SKU\n${restoredOfflineItems.length} 个线下品项\n${restoredOfflineLogs.length} 条出入库记录\n${restoredApprovals.length} 条审批记录\n\n数据已同步到云端。`;
+      console.log(msg);
+      setWarning(msg.replace(/\n/g, ' '));
+      window.alert(msg);
     } catch (err) {
       console.error('❌ 数据恢复失败:', err);
-      setWarning('❌ 数据恢复失败: ' + err.message);
+      isRestoringRef.current = false;
+      hasPendingChangesRef.current = false;
+      hasPendingSettingsRef.current = false;
+      const errMsg = '❌ 数据恢复失败!\n\n错误信息: ' + err.message + '\n错误码: ' + (err.code || '无');
+      setWarning(errMsg.replace(/\n/g, ' '));
+      window.alert(errMsg);
     }
   };
 
@@ -937,6 +996,11 @@ const App = () => {
     if (!isInitialLoadDone || skus.length === 0) return;
     if (!cloudDataLoadedRef.current) {
       console.log('⏸️ 尚未成功接收云端数据，跳过云端写入（防止空数据覆盖）');
+      return;
+    }
+    // 🔒 恢复操作进行中，跳过自动保存以防冲突
+    if (isRestoringRef.current) {
+      console.log('⏸️ 数据恢复进行中，跳过自动云端同步');
       return;
     }
 
