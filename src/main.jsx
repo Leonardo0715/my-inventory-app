@@ -459,6 +459,8 @@ const App = () => {
   const hasPendingSettingsRef = useRef(false);
   // 🔒 核心防护：只有成功接收过云端数据后才允许写回云端
   const cloudDataLoadedRef = useRef(false);
+  // 备份状态
+  const [lastBackupInfo, setLastBackupInfo] = useState(null);
 
   const transportOptions = transportModes.map(mode => {
     const iconMap = { sea: Ship, air: Plane, rail: Train };
@@ -662,7 +664,7 @@ const App = () => {
         },
       };
       await setDoc(backupDocRef, backupPayload);
-      const info = `${new Date().toLocaleString('zh-CN')} (${trigger === 'login' ? '上线' : trigger === 'logout' ? '下线' : '手动'}) by ${user.email}`;
+      const info = `${new Date().toLocaleString('zh-CN')} (${trigger === 'auto' ? '自动' : trigger === 'login' ? '上线' : trigger === 'logout' ? '下线' : '手动'}) by ${user.email}`;
       setLastBackupInfo(info);
       console.log('💾 自动备份成功:', info, '| SKU:', skus.length, '| 线下品项:', offlineInventoryItems.length, '| 日志:', offlineInventoryLogs.length);
       return true;
@@ -708,11 +710,6 @@ const App = () => {
 
   const handleLogout = async () => {
     try {
-      // 💾 下线前自动备份
-      if (skus.length > 0 && db && user) {
-        console.log('💾 登出前执行自动备份...');
-        await saveBackupToCloud('logout');
-      }
       await signOut(auth);
       console.log('✅ 登出成功');
       // 🔒 完全重置所有数据状态和同步标记，防止下一个用户登录时旧数据覆盖云端
@@ -726,7 +723,6 @@ const App = () => {
       cloudDataLoadedRef.current = false;
       hasPendingChangesRef.current = false;
       hasPendingSettingsRef.current = false;
-      hasBackedUpOnLoginRef.current = false;
       lastRemoteItemsJSONRef.current = '';
       setLoginEmail('');
       setLoginPassword('');
@@ -954,12 +950,6 @@ const App = () => {
           // 🔒 标记：已成功接收到云端数据，后续才允许云端写入
           cloudDataLoadedRef.current = true;
           console.log('🔒 cloudDataLoadedRef = true，允许云端写入');
-          // 💾 上线时自动备份（仅首次接收云端数据时触发一次）
-          if (!hasBackedUpOnLoginRef.current && remoteData.length > 0) {
-            hasBackedUpOnLoginRef.current = true;
-            // 延迟执行，确保 React 状态已更新
-            setTimeout(() => saveBackupToCloud('login'), 2000);
-          }
           // 加载云端设置
           if (!hasPendingSettingsRef.current) {
             if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
@@ -1067,6 +1057,21 @@ const App = () => {
     }, 300);
     return () => clearTimeout(timer);
   }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, localKey]);
+
+  // --- 4.1.1 云端自动备份（数据变化时每30秒自动备份一次） ---
+  const lastBackupJSONRef = useRef('');
+  useEffect(() => {
+    if (!db || !user || !cloudDataLoadedRef.current || skus.length === 0) return;
+    if (isRestoringRef.current) return;
+    // 生成当前数据快照，仅数据变化时才触发备份
+    const currentJSON = JSON.stringify({ skus: skus.length, offline: offlineInventoryItems.length, logs: offlineInventoryLogs.length, approvals: deleteApprovals.length });
+    if (currentJSON === lastBackupJSONRef.current) return;
+    const timer = setTimeout(() => {
+      lastBackupJSONRef.current = currentJSON;
+      saveBackupToCloud('auto');
+    }, 30000); // 30秒防抖，避免频繁写入
+    return () => clearTimeout(timer);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, warningDays, defaultSettings, transportModes, userRoles, db, user]);
 
   // --- 4.2 云端自动存档（多人共享） ---
   // 清理对象中的 undefined 值（Firestore 不支持 undefined）
@@ -5241,7 +5246,7 @@ const App = () => {
                 <div className="bg-green-50 p-4 rounded-2xl border border-green-200 space-y-3">
                   <div className="text-xs font-bold text-green-800">💾 云端自动备份</div>
                   <div className="text-[10px] text-green-700">
-                    系统会在每个用户<b>上线</b>和<b>下线</b>时自动保存一份完整数据备份到云端独立文档，覆盖上一次备份。
+                    系统会在数据发生变化后<b>每30秒</b>自动保存一份完整数据备份到云端独立文档，覆盖上一次备份。
                   </div>
                   {lastBackupInfo && (
                     <div className="text-[10px] text-green-600 bg-green-100 px-2 py-1 rounded">
