@@ -860,6 +860,7 @@ const App = () => {
         data = typeof jsonText === 'string' ? JSON.parse(jsonText) : jsonText;
       } catch (parseErr) {
         window.alert('❌ JSON 解析失败，请检查粘贴的内容是否完整。\n\n错误：' + parseErr.message);
+        isRestoringRef.current = false;
         return;
       }
 
@@ -867,6 +868,7 @@ const App = () => {
       const rawSkus = data.skus || data.items || [];
       if (!Array.isArray(rawSkus) || rawSkus.length === 0) {
         window.alert('❌ 备份数据无效：找不到 skus/items 数组，或数组为空。\n\n检测到的顶级字段: ' + Object.keys(data).join(', '));
+        isRestoringRef.current = false;
         return;
       }
 
@@ -1030,6 +1032,47 @@ const App = () => {
         console.log('✅ 云端数据订阅成功');
         if (docSnap.exists()) {
           const remoteData = sanitizeSkus(docSnap.data().items || []);
+
+          // 🔒 云端文档存在但 items 为空：视为异常，尝试从备份恢复
+          if (remoteData.length === 0) {
+            console.warn('⚠️ 云端文档存在但 items 为空，视为异常，尝试从备份恢复...');
+            const tryRestoreEmpty = async () => {
+              const backupsToTry = [
+                { path: 'backup', label: '常规备份' },
+                { path: 'backup_safe', label: '安全备份' },
+              ];
+              for (const { path, label } of backupsToTry) {
+                try {
+                  const bRef = doc(db, 'inventory_apps', appId, 'shared', path);
+                  const bSnap = await getDoc(bRef);
+                  if (bSnap.exists()) {
+                    const bd = bSnap.data();
+                    const bItems = sanitizeSkus(bd.items || []);
+                    if (bItems.length > 0) {
+                      console.log('🔄 云端 items 为空，从' + label + '恢复中... SKU:', bItems.length);
+                      const bOfflineItems = sanitizeOfflineInventoryItems(bd.offlineInventoryItems || []);
+                      const bOfflineLogs = sanitizeOfflineInventoryLogs(bd.offlineInventoryLogs || []);
+                      const bRecipientDir = sanitizeRecipientDirectory(bd.offlineRecipientDirectory || []);
+                      const bApprovals = sanitizeDeleteApprovals(bd.deleteApprovals || []);
+                      const clean = (o) => { if (Array.isArray(o)) return o.map(clean); if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).filter(([,v])=>v!==undefined).map(([k,v])=>[k,clean(v)])); return o; };
+                      await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
+                      setWarning('⚠️ 云端数据异常清空，已从' + label + '自动恢复（' + bItems.length + ' 个SKU）');
+                      // onSnapshot 会再次触发并加载恢复后的数据
+                      return true;
+                    }
+                  }
+                } catch (e) {
+                  console.warn('⚠️ 从' + label + '恢复失败:', e.message);
+                }
+              }
+              return false;
+            };
+            tryRestoreEmpty();
+            // 不设置 cloudDataLoadedRef，阻止空数据写回云端
+            setIsInitialLoadDone(true);
+            return;
+          }
+
           const remoteOfflineItems = sanitizeOfflineInventoryItems(docSnap.data().offlineInventoryItems || []);
           const remoteOfflineLogs = sanitizeOfflineInventoryLogs(docSnap.data().offlineInventoryLogs || []);
           const remoteRecipientDirectory = sanitizeRecipientDirectory(docSnap.data().offlineRecipientDirectory || []);
@@ -1202,7 +1245,7 @@ const App = () => {
     if (isRestoringRef.current) return;
     // 🔒 防空：如果已知云端有大量数据，但当前 state 数据骤降，不触发自动备份
     if (remoteSkuCountRef.current > 5 && skus.length < remoteSkuCountRef.current * 0.5) {
-      console.warn('⚠️ 自动备份跳过：SKU(' + skus.length + ') 远少于云端峰值(' + remoteSkuCountRef.current + ')');
+      console.warn('⚠️ 自动备份跳过：SKU(' + skus.length + ') 远少于云端实际数(' + remoteSkuCountRef.current + ')');
       return;
     }
     // 生成当前完整数据快照（包含内容），任何字段变化都会触发备份
