@@ -2781,20 +2781,37 @@ const App = () => {
     }
 
     // 补货建议: 现在下单应该补多少，才能覆盖 6.5 个月（安全周期）
+    // 直接使用推演数据（已包含PO到货和月度消耗），确保与库存推演表一致
     const safeCoverageMonths = 6.5;
     const safeCoverageDays = Math.ceil(safeCoverageMonths * 30);
     
-    // 计算从今天到安全覆盖期末，需要消耗多少
-    let cumulativeConsumption = 0;
-    for (let i = 0; i < f.data.length && i < safeCoverageDays; i++) {
-      const dateData = f.data[i];
-      const monthIdx = new Date(dateData.date).getMonth();
-      const monthConsumption = (sku.monthlySales?.[monthIdx] || 0) / 30; // 日均消耗
-      cumulativeConsumption += monthConsumption;
-    }
+    // 从推演数据找到安全覆盖期末的库存量
+    const safeEndIdx = Math.min(safeCoverageDays, f.data.length - 1);
+    const safeEndStock = f.data[safeEndIdx]?.stock ?? 0;
     
-    const currentStock = Number(sku.currentStock || 0);
-    suggestQty = Math.max(0, cumulativeConsumption - currentStock);
+    if (safeEndStock > 0) {
+      // 安全期末仍有库存，不需要补货
+      suggestQty = 0;
+    } else {
+      // 找到推演中第一个断货日，计算从那天到安全期末需要多少库存
+      // 方法：统计安全期内所有断货天数的累计消耗
+      const monthlySalesForCalc = getMonthlySalesForForecast(sku, new Date());
+      const nonZeroRates = monthlySalesForCalc.filter(v => v > 0);
+      const avgMonthlyRate = nonZeroRates.length > 0 ? nonZeroRates.reduce((a, b) => a + b, 0) / nonZeroRates.length : 0;
+      const dailyRatesCalc = monthlySalesForCalc.map(m => {
+        const r = Number(m) / 30;
+        return r > 0 ? r : (avgMonthlyRate / 30);
+      });
+      
+      let deficit = 0;
+      for (let i = 0; i <= safeEndIdx; i++) {
+        if (f.data[i].stock <= 0) {
+          const monthIdx = new Date(f.data[i].date).getMonth();
+          deficit += dailyRatesCalc[monthIdx];
+        }
+      }
+      suggestQty = Math.max(0, Math.ceil(deficit));
+    }
     
     // 计算每个月的有货状态（从当前日期往后推12个月）
     const monthlyAvailability = Array(12).fill(false);
@@ -3582,13 +3599,14 @@ const App = () => {
                         <div className="mt-1 text-[10px] font-medium text-slate-500">
                           {needOrder
                             ? `补货后可周转至: ${(() => {
-                                if (!currentDashSku) return '--';
-                                // 用推演引擎重新模拟：当前库存 + 建议补货量，复用年度销量数据
-                                const simSku = { ...currentDashSku, currentStock: Number(currentDashSku.currentStock || 0) + qty };
-                                const simForecast = generateForecast(simSku, 730);
-                                const simIdx = simForecast.data.findIndex(d => d.stock <= 0);
-                                if (simIdx === -1) return `${new Date(simForecast.data[simForecast.data.length - 1].date).toLocaleDateString()} 之后`;
-                                return new Date(simForecast.data[simIdx].date).toLocaleDateString();
+                                if (!activeSku) return '--';
+                                // 用推演引擎模拟：当前库存 + 建议补货量作为起始库存，重跑推演
+                                // generateForecast 使用 getMonthlySalesForForecast 和 PO 数据，与库存推演表完全一致
+                                const simSku = { ...activeSku, currentStock: Number(activeSku.currentStock || 0) + qty };
+                                const simF = generateForecast(simSku, 730);
+                                const simIdx = simF.data.findIndex(d => d.stock <= 0);
+                                if (simIdx === -1) return `${new Date(simF.data[simF.data.length - 1].date).toLocaleDateString()} 之后`;
+                                return new Date(simF.data[simIdx].date).toLocaleDateString();
                               })()}`
                             : '当前库存充足，无需补货'}
                         </div>
