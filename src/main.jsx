@@ -3383,7 +3383,6 @@ const App = () => {
                     {/* 货态条 */}
                     <div className="flex gap-0.5">
                       {item.monthlyAvailability?.map((hasStock, idx) => {
-                        // 根据当前日期计算实际月份
                         const months = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
                         const today = new Date();
                         const targetMonth = (today.getMonth() + idx) % 12;
@@ -3394,6 +3393,22 @@ const App = () => {
                             className={`flex-1 h-2 rounded-sm transition-all ${hasStock ? 'bg-emerald-500' : 'bg-slate-200'}`}
                             title={`${monthLabel}: ${hasStock ? '有货' : '缺货'}`}
                           />
+                        );
+                      })}
+                    </div>
+                    {/* 月份标注 */}
+                    <div className="flex gap-0.5">
+                      {Array.from({ length: 12 }, (_, idx) => {
+                        const today = new Date();
+                        const targetMonth = (today.getMonth() + idx) % 12;
+                        const targetYear = today.getFullYear() + Math.floor((today.getMonth() + idx) / 12);
+                        const prevMonth = idx > 0 ? (today.getMonth() + idx - 1) % 12 : -1;
+                        const isNewYear = idx > 0 && targetMonth === 0;
+                        return (
+                          <div key={idx} className="flex-1 text-center leading-none">
+                            {isNewYear && <div className="text-[7px] font-black text-indigo-500">{targetYear}</div>}
+                            <div className={`text-[7px] ${isNewYear ? 'font-black text-indigo-500' : 'font-medium text-slate-400'}`}>{targetMonth + 1}月</div>
+                          </div>
                         );
                       })}
                     </div>
