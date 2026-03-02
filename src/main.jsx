@@ -465,6 +465,10 @@ const App = () => {
   const remoteSkuCountRef = useRef(0);
   // 备份状态
   const [lastBackupInfo, setLastBackupInfo] = useState(null);
+  const lastBackupSkuCountRef = useRef(0);
+  // 🛡️ 安全备份（仅在数据量健康时更新的"保险箱"备份）
+  const lastSafeBackupCountRef = useRef(0);
+  const [lastSafeBackupInfo, setLastSafeBackupInfo] = useState(null);
 
   const transportOptions = transportModes.map(mode => {
     const iconMap = { sea: Ship, air: Plane, rail: Train };
@@ -638,6 +642,41 @@ const App = () => {
     if (skus.length === 0) { console.warn('⚠️ 备份跳过：数据为空'); return false; }
     try {
       const backupDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
+
+      // 🔒 防空机制：自动备份前先读取旧备份，如果旧备份数据量远大于当前数据，拒绝覆盖
+      if (trigger === 'auto') {
+        try {
+          const existingBackup = await getDoc(backupDocRef);
+          if (existingBackup.exists()) {
+            const oldMeta = existingBackup.data()?._backup_meta;
+            const oldSkuCount = oldMeta?.skuCount || 0;
+            if (oldSkuCount > 5 && skus.length < oldSkuCount * 0.5) {
+              console.error('🚨 备份防空拦截：当前 SKU(' + skus.length + ') 远少于旧备份(' + oldSkuCount + ')，拒绝自动覆盖备份');
+              return false;
+            }
+          }
+        } catch (readErr) {
+          console.warn('⚠️ 读取旧备份失败，跳过本次自动备份以保安全:', readErr.message);
+          return false;
+        }
+      } else if (trigger === 'manual') {
+        // 手动备份：仍然检查，但通过 confirm 让管理员确认
+        try {
+          const existingBackup = await getDoc(backupDocRef);
+          if (existingBackup.exists()) {
+            const oldMeta = existingBackup.data()?._backup_meta;
+            const oldSkuCount = oldMeta?.skuCount || 0;
+            if (oldSkuCount > 5 && skus.length < oldSkuCount * 0.5) {
+              const ok = window.confirm(
+                '⚠️ 安全警告！\n\n当前 SKU 数量(' + skus.length + ') 远少于旧备份(' + oldSkuCount + ')。\n\n覆盖备份可能导致数据永久丢失！确定要继续吗？'
+              );
+              if (!ok) return false;
+            }
+          }
+        } catch (readErr) {
+          console.warn('⚠️ 读取旧备份失败:', readErr.message);
+        }
+      }
       const clean = (obj) => {
         if (Array.isArray(obj)) return obj.map(clean);
         if (obj !== null && typeof obj === 'object') {
@@ -668,9 +707,43 @@ const App = () => {
         },
       };
       await setDoc(backupDocRef, backupPayload);
+      lastBackupSkuCountRef.current = skus.length;
       const info = `${new Date().toLocaleString('zh-CN')} (${trigger === 'auto' ? '自动' : trigger === 'login' ? '上线' : trigger === 'logout' ? '下线' : '手动'}) by ${user.email}`;
       setLastBackupInfo(info);
-      console.log('💾 自动备份成功:', info, '| SKU:', skus.length, '| 线下品项:', offlineInventoryItems.length, '| 日志:', offlineInventoryLogs.length);
+      console.log('💾 备份成功:', info, '| SKU:', skus.length, '| 线下品项:', offlineInventoryItems.length, '| 日志:', offlineInventoryLogs.length);
+
+      // --- 🛡️ 安全备份（backup_safe）：仅在数据量健康时更新 ---
+      const backupSafeDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup_safe');
+      // 首次运行时从 Firestore 读取安全备份基准值
+      if (lastSafeBackupCountRef.current === 0) {
+        try {
+          const existingSafe = await getDoc(backupSafeDocRef);
+          if (existingSafe.exists()) {
+            const safeMeta = existingSafe.data()?._backup_meta;
+            lastSafeBackupCountRef.current = safeMeta?.skuCount || 0;
+            const safeTs = safeMeta?.timestamp || '未知';
+            setLastSafeBackupInfo(`${safeTs} | SKU: ${lastSafeBackupCountRef.current}`);
+            console.log('🛡️ 安全备份基准初始化:', lastSafeBackupCountRef.current, 'SKUs');
+          }
+        } catch (e) { console.warn('⚠️ 读取安全备份基准失败:', e.message); }
+      }
+      // 安全备份仅在数据量 >= 上次的 80% 或首次时写入
+      const shouldUpdateSafe = lastSafeBackupCountRef.current === 0 || skus.length >= lastSafeBackupCountRef.current * 0.8;
+      if (shouldUpdateSafe) {
+        try {
+          const safePayload = { ...backupPayload, _backup_meta: { ...backupPayload._backup_meta, type: 'safe' } };
+          await setDoc(backupSafeDocRef, safePayload);
+          lastSafeBackupCountRef.current = skus.length;
+          const safeInfo = `${new Date().toLocaleString('zh-CN')} | SKU: ${skus.length}`;
+          setLastSafeBackupInfo(safeInfo);
+          console.log('🛡️ 安全备份已更新:', safeInfo);
+        } catch (safeErr) {
+          console.warn('⚠️ 安全备份写入失败:', safeErr.message);
+        }
+      } else {
+        console.log('🛡️ 安全备份保持冻结（当前SKU:' + skus.length + ' < 安全基准:' + lastSafeBackupCountRef.current + ' × 80%）');
+      }
+
       return true;
     } catch (err) {
       console.error('❌ 自动备份失败:', err.message);
@@ -678,32 +751,66 @@ const App = () => {
     }
   };
 
-  // 🔄 从云端备份恢复
-  const restoreFromCloudBackup = async () => {
+  // 🔄 从云端备份恢复（支持选择常规备份或安全备份）
+  const restoreFromCloudBackup = async (source = 'choose') => {
     if (!canManagePermissions) { window.alert('❌ 仅管理员可执行数据恢复'); return; }
     if (!db || !user) { window.alert('❌ 未连接云端'); return; }
     try {
       const backupDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
-      const backupSnap = await getDoc(backupDocRef);
-      if (!backupSnap.exists()) {
-        window.alert('❌ 云端没有找到备份数据');
+      const backupSafeDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup_safe');
+      // 并行读取两份备份
+      const [backupSnap, safeSnap] = await Promise.all([getDoc(backupDocRef), getDoc(backupSafeDocRef)]);
+      const hasBackup = backupSnap.exists() && ((backupSnap.data()?.items?.length || 0) > 0);
+      const hasSafe = safeSnap.exists() && ((safeSnap.data()?.items?.length || 0) > 0);
+
+      if (!hasBackup && !hasSafe) {
+        window.alert('❌ 云端没有找到任何备份数据');
         return;
       }
-      const backupData = backupSnap.data();
-      const meta = backupData._backup_meta || {};
-      const confirmMsg = `找到云端备份：\n\n📅 时间：${meta.timestamp || '未知'}\n👤 操作者：${meta.userEmail || '未知'}\n📦 触发方式：${meta.trigger === 'login' ? '上线' : meta.trigger === 'logout' ? '下线' : meta.trigger || '未知'}\n\n📊 SKU: ${meta.skuCount || '?'} 个\n📦 线下品项: ${meta.offlineItemCount || '?'} 个\n📝 日志: ${meta.logCount || '?'} 条\n✅ 审批: ${meta.approvalCount || '?'} 条\n\n确定要用此备份恢复吗？`;
-      if (!window.confirm(confirmMsg)) return;
-      // 复用 restoreFromBackup，传入数据对象
+
+      const fmtMeta = (meta) => `📅 ${meta?.timestamp || '未知'}  👤 ${meta?.userEmail || '未知'}\n📊 SKU: ${meta?.skuCount || '?'}  线下: ${meta?.offlineItemCount || '?'}  日志: ${meta?.logCount || '?'}`;
+
+      let chosenData;
+      if (source === 'safe') {
+        if (!hasSafe) { window.alert('❌ 没有安全备份'); return; }
+        const safeMeta = safeSnap.data()._backup_meta || {};
+        if (!window.confirm('🛡️ 从安全备份恢复：\n\n' + fmtMeta(safeMeta) + '\n\n确定恢复吗？')) return;
+        chosenData = safeSnap.data();
+      } else if (source === 'latest') {
+        if (!hasBackup) { window.alert('❌ 没有常规备份'); return; }
+        const meta = backupSnap.data()._backup_meta || {};
+        if (!window.confirm('📥 从最新备份恢复：\n\n' + fmtMeta(meta) + '\n\n确定恢复吗？')) return;
+        chosenData = backupSnap.data();
+      } else {
+        // 让用户选择
+        const backupMeta = hasBackup ? (backupSnap.data()._backup_meta || {}) : null;
+        const safeMeta = hasSafe ? (safeSnap.data()._backup_meta || {}) : null;
+        let msg = '选择要恢复的备份：\n\n';
+        if (hasBackup) msg += '【1】最新备份\n' + fmtMeta(backupMeta) + '\n\n';
+        if (hasSafe) msg += '【2】🛡️ 安全备份（数据量最稳定的版本）\n' + fmtMeta(safeMeta) + '\n\n';
+        if (hasBackup && hasSafe) {
+          const choice = window.prompt(msg + '输入 1 或 2 选择：');
+          if (choice === '2') chosenData = safeSnap.data();
+          else if (choice === '1') chosenData = backupSnap.data();
+          else { if (choice !== null) window.alert('无效选择'); return; }
+        } else {
+          chosenData = hasBackup ? backupSnap.data() : safeSnap.data();
+          const meta = chosenData._backup_meta || {};
+          if (!window.confirm('找到云端备份：\n\n' + fmtMeta(meta) + '\n\n确定恢复吗？')) return;
+        }
+      }
+
+      if (!chosenData) return;
       const jsonForRestore = JSON.stringify({
-        skus: backupData.items || [],
-        offlineInventoryItems: backupData.offlineInventoryItems || [],
-        offlineInventoryLogs: backupData.offlineInventoryLogs || [],
-        offlineRecipientDirectory: backupData.offlineRecipientDirectory || [],
-        deleteApprovals: backupData.deleteApprovals || [],
-        warningDays: backupData.warningDays,
-        defaultSettings: backupData.defaultSettings,
-        transportModes: backupData.transportModes,
-        userRoles: backupData.userRoles,
+        skus: chosenData.items || [],
+        offlineInventoryItems: chosenData.offlineInventoryItems || [],
+        offlineInventoryLogs: chosenData.offlineInventoryLogs || [],
+        offlineRecipientDirectory: chosenData.offlineRecipientDirectory || [],
+        deleteApprovals: chosenData.deleteApprovals || [],
+        warningDays: chosenData.warningDays,
+        defaultSettings: chosenData.defaultSettings,
+        transportModes: chosenData.transportModes,
+        userRoles: chosenData.userRoles,
       });
       await restoreFromBackup(jsonForRestore);
     } catch (err) {
@@ -734,6 +841,9 @@ const App = () => {
       setLoginPassword('');
       setLoginError('');
       setLastBackupInfo(null);
+      setLastSafeBackupInfo(null);
+      lastBackupSkuCountRef.current = 0;
+      lastSafeBackupCountRef.current = 0;
     } catch (err) {
       console.error('❌ 登出失败:', err.message);
       setLoginError('登出失败，请重试');
@@ -987,40 +1097,47 @@ const App = () => {
           console.warn('⚠️ 当前用户:', user?.email);
           
           const tryRestoreFromBackup = async () => {
-            try {
-              const backupRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
-              const backupSnap = await getDoc(backupRef);
-              if (backupSnap.exists()) {
-                const bd = backupSnap.data();
-                const bItems = sanitizeSkus(bd.items || []);
-                if (bItems.length > 0) {
-                  console.log('🔄 发现云端备份，自动恢复中... SKU:', bItems.length);
-                  const bOfflineItems = sanitizeOfflineInventoryItems(bd.offlineInventoryItems || []);
-                  const bOfflineLogs = sanitizeOfflineInventoryLogs(bd.offlineInventoryLogs || []);
-                  const bRecipientDir = sanitizeRecipientDirectory(bd.offlineRecipientDirectory || []);
-                  const bApprovals = sanitizeDeleteApprovals(bd.deleteApprovals || []);
-                  setSkus(bItems);
-                  setOfflineInventoryItems(bOfflineItems);
-                  setOfflineInventoryLogs(bOfflineLogs);
-                  setOfflineRecipientDirectory(bRecipientDir);
-                  setDeleteApprovals(bApprovals);
-                  setSelectedSkuId(bItems[0]?.id ?? 1);
-                  if (bd.warningDays) setWarningDays(bd.warningDays);
-                  if (bd.defaultSettings) setDefaultSettings(bd.defaultSettings);
-                  if (bd.transportModes) setTransportModes(bd.transportModes);
-                  if (bd.userRoles) setUserRoles(bd.userRoles);
-                  const clean = (o) => { if (Array.isArray(o)) return o.map(clean); if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).filter(([,v])=>v!==undefined).map(([k,v])=>[k,clean(v)])); return o; };
-                  await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
-                  lastRemoteItemsJSONRef.current = JSON.stringify({ items: bItems, offlineInventoryItems: bOfflineItems, offlineInventoryLogs: bOfflineLogs, offlineRecipientDirectory: bRecipientDir, deleteApprovals: bApprovals });
-                  cloudDataLoadedRef.current = true;
-                  remoteSkuCountRef.current = bItems.length;
-                  console.log('✅ 从云端备份自动恢复成功！SKU:', bItems.length);
-                  setWarning('✅ 云端数据已从备份自动恢复（' + bItems.length + ' 个SKU）');
-                  return true;
+            // 依次尝试：常规备份 → 安全备份
+            const backupsToTry = [
+              { path: 'backup', label: '常规备份' },
+              { path: 'backup_safe', label: '安全备份' },
+            ];
+            for (const { path, label } of backupsToTry) {
+              try {
+                const bRef = doc(db, 'inventory_apps', appId, 'shared', path);
+                const bSnap = await getDoc(bRef);
+                if (bSnap.exists()) {
+                  const bd = bSnap.data();
+                  const bItems = sanitizeSkus(bd.items || []);
+                  if (bItems.length > 0) {
+                    console.log('🔄 发现云端' + label + '，自动恢复中... SKU:', bItems.length);
+                    const bOfflineItems = sanitizeOfflineInventoryItems(bd.offlineInventoryItems || []);
+                    const bOfflineLogs = sanitizeOfflineInventoryLogs(bd.offlineInventoryLogs || []);
+                    const bRecipientDir = sanitizeRecipientDirectory(bd.offlineRecipientDirectory || []);
+                    const bApprovals = sanitizeDeleteApprovals(bd.deleteApprovals || []);
+                    setSkus(bItems);
+                    setOfflineInventoryItems(bOfflineItems);
+                    setOfflineInventoryLogs(bOfflineLogs);
+                    setOfflineRecipientDirectory(bRecipientDir);
+                    setDeleteApprovals(bApprovals);
+                    setSelectedSkuId(bItems[0]?.id ?? 1);
+                    if (bd.warningDays) setWarningDays(bd.warningDays);
+                    if (bd.defaultSettings) setDefaultSettings(bd.defaultSettings);
+                    if (bd.transportModes) setTransportModes(bd.transportModes);
+                    if (bd.userRoles) setUserRoles(bd.userRoles);
+                    const clean = (o) => { if (Array.isArray(o)) return o.map(clean); if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).filter(([,v])=>v!==undefined).map(([k,v])=>[k,clean(v)])); return o; };
+                    await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
+                    lastRemoteItemsJSONRef.current = JSON.stringify({ items: bItems, offlineInventoryItems: bOfflineItems, offlineInventoryLogs: bOfflineLogs, offlineRecipientDirectory: bRecipientDir, deleteApprovals: bApprovals });
+                    cloudDataLoadedRef.current = true;
+                    remoteSkuCountRef.current = bItems.length;
+                    console.log('✅ 从云端' + label + '自动恢复成功！SKU:', bItems.length);
+                    setWarning('✅ 云端数据已从' + label + '自动恢复（' + bItems.length + ' 个SKU）');
+                    return true;
+                  }
                 }
+              } catch (e) {
+                console.warn('⚠️ 尝试从' + label + '恢复失败:', e.message);
               }
-            } catch (e) {
-              console.warn('⚠️ 尝试从备份恢复失败:', e.message);
             }
             return false;
           };
@@ -1086,6 +1203,11 @@ const App = () => {
   useEffect(() => {
     if (!db || !user || !cloudDataLoadedRef.current || skus.length === 0) return;
     if (isRestoringRef.current) return;
+    // 🔒 防空：如果已知云端有大量数据，但当前 state 数据骤降，不触发自动备份
+    if (remoteSkuCountRef.current > 5 && skus.length < remoteSkuCountRef.current * 0.5) {
+      console.warn('⚠️ 自动备份跳过：SKU(' + skus.length + ') 远少于云端峰值(' + remoteSkuCountRef.current + ')');
+      return;
+    }
     // 生成当前完整数据快照（包含内容），任何字段变化都会触发备份
     const currentJSON = JSON.stringify({
       skus,
@@ -5287,13 +5409,20 @@ const App = () => {
 
                 {/* 自动备份状态 */}
                 <div className="bg-green-50 p-4 rounded-2xl border border-green-200 space-y-3">
-                  <div className="text-xs font-bold text-green-800">💾 云端自动备份</div>
+                  <div className="text-xs font-bold text-green-800">💾 云端双层自动备份</div>
                   <div className="text-[10px] text-green-700">
-                    系统会在数据发生变化后<b>每30秒</b>自动保存一份完整数据备份到云端独立文档，覆盖上一次备份。
+                    系统会在数据发生变化后<b>每30秒</b>自动保存<b>两份</b>备份：<br/>
+                    • <b>常规备份</b>：每次自动保存（数据骤降&gt;50%时拦截）<br/>
+                    • <b>🛡️ 安全备份</b>：仅在数据量健康时更新（数据骤降&gt;20%时冻结），作为最后防线
                   </div>
                   {lastBackupInfo && (
                     <div className="text-[10px] text-green-600 bg-green-100 px-2 py-1 rounded">
-                      📋 最近备份: {lastBackupInfo}
+                      📋 常规备份: {lastBackupInfo}
+                    </div>
+                  )}
+                  {lastSafeBackupInfo && (
+                    <div className="text-[10px] text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                      🛡️ 安全备份: {lastSafeBackupInfo}
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -5303,11 +5432,19 @@ const App = () => {
                     >
                       💾 立即手动备份
                     </button>
+                  </div>
+                  <div className="flex gap-2">
                     <button
-                      onClick={restoreFromCloudBackup}
+                      onClick={() => restoreFromCloudBackup('latest')}
                       className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-black"
                     >
-                      📥 从云端备份恢复
+                      📥 恢复最新备份
+                    </button>
+                    <button
+                      onClick={() => restoreFromCloudBackup('safe')}
+                      className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-xs font-black"
+                    >
+                      🛡️ 恢复安全备份
                     </button>
                   </div>
                 </div>
