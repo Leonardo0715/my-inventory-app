@@ -61,10 +61,12 @@ const PURPOSE_OPTIONS = [
   { key: 'return', label: '退货处理' },
   { key: 'gift', label: '赠品' },
   { key: 'scrap', label: '损耗报废' },
-  { key: 'calibration', label: '库存校准' },
 ];
 const PURPOSE_KEYS = PURPOSE_OPTIONS.map(p => p.key);
-const getPurposeLabel = (purpose) => PURPOSE_OPTIONS.find(p => p.key === purpose)?.label || purpose || '寄样';
+const getPurposeLabel = (purpose) => {
+  if (purpose === 'calibration') return '库存校准';
+  return PURPOSE_OPTIONS.find(p => p.key === purpose)?.label || purpose || '寄样';
+};
 
 // 🔍 诊断：输出 Firebase 配置状态
 console.log('🔍 Firebase 配置诊断：');
@@ -411,6 +413,9 @@ const App = () => {
   const [offlineProfileAddress, setOfflineProfileAddress] = useState('');
   const [offlineProfileRemark, setOfflineProfileRemark] = useState('');
   const [offlineEditingProfileId, setOfflineEditingProfileId] = useState('');
+  const [offlineCalibrationItemId, setOfflineCalibrationItemId] = useState('');
+  const [offlineCalibrationActual, setOfflineCalibrationActual] = useState('');
+  const [offlineCalibrationRemark, setOfflineCalibrationRemark] = useState('');
   const [offlineTxItemId, setOfflineTxItemId] = useState('');
   const [offlineTxType, setOfflineTxType] = useState('in');
   const [offlineTxPurpose, setOfflineTxPurpose] = useState('sample');
@@ -1960,6 +1965,57 @@ const App = () => {
 
     setOfflineTxQty('');
     setOfflineTxRemark('');
+  };
+
+  // 库存校准：用户输入实际盘点数量，系统自动计算差值并生成调整记录
+  const recordCalibration = () => {
+    if (!ensureEditPermission()) return;
+    const itemIdNum = Number(offlineCalibrationItemId);
+    const actualStock = Number(offlineCalibrationActual);
+    const remark = String(offlineCalibrationRemark || '').trim();
+    const account = String(user?.email || '').trim();
+    if (!Number.isFinite(itemIdNum)) { setWarning('请选择要校准的品项'); return; }
+    if (!Number.isFinite(actualStock) || actualStock < 0) { setWarning('请输入有效的实际库存数量（≥0）'); return; }
+    if (!account) { setWarning('当前未获取到登录账号，请重新登录后再操作'); return; }
+    const targetItem = offlineInventoryItems.find(item => item.id === itemIdNum);
+    if (!targetItem) { setWarning('线下库存品项不存在'); return; }
+    const currentStock = Number(targetItem.currentStock || 0);
+    const delta = actualStock - currentStock;
+    if (delta === 0) { setWarning('实际库存与系统库存一致，无需校准'); return; }
+    const now = new Date().toISOString();
+    const txType = delta > 0 ? 'in' : 'out';
+    const absQty = Math.abs(delta);
+    setOfflineInventoryItems(prev => prev.map(item => {
+      if (item.id !== itemIdNum) return item;
+      const inboundTotal = Number(item.inboundTotal || 0);
+      const outboundTotal = Number(item.outboundTotal || 0);
+      return {
+        ...item,
+        currentStock: actualStock,
+        inboundTotal: delta > 0 ? inboundTotal + absQty : inboundTotal,
+        outboundTotal: delta < 0 ? outboundTotal + absQty : outboundTotal,
+        remark: remark || item.remark,
+        updatedAt: now,
+      };
+    }));
+    setOfflineInventoryLogs(prev => [{
+      id: Date.now(),
+      itemId: targetItem.id,
+      itemName: targetItem.name,
+      type: txType,
+      purpose: 'calibration',
+      qty: absQty,
+      account,
+      customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
+      profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
+      trackingNo: '',
+      remark: remark || `库存校准：${currentStock} → ${actualStock}（${delta > 0 ? '+' : ''}${delta}）`,
+      operator: user?.email || '',
+      happenedAt: now,
+    }, ...prev]);
+    setOfflineCalibrationActual('');
+    setOfflineCalibrationRemark('');
+    setWarning(`✅ 库存校准完成：${targetItem.name} ${currentStock} → ${actualStock}（${delta > 0 ? '校准入库 +' : '校准出库 '}${delta}）`);
   };
 
   // 管理员编辑出库记录（同步回退/补偿库存）
@@ -4290,6 +4346,62 @@ const App = () => {
                       同一客户同一快递单可连续登记多种 SKU：保持客户和单号不变，逐个切 SKU 录入出库数量即可。
                     </div>
                   )}
+                </div>
+              </div>
+
+              <div className="bg-white border border-amber-200 rounded-2xl p-4">
+                <h3 className="text-sm font-black text-amber-800 mb-3">📐 库存校准（盘点）</h3>
+                <div className="text-[10px] text-amber-700 font-medium mb-3 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                  输入实际盘点数量，系统自动计算差值并生成校准记录。
+                </div>
+                <div className="space-y-3">
+                  <select
+                    value={offlineCalibrationItemId}
+                    onChange={e => setOfflineCalibrationItemId(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                  >
+                    <option value="">选择品项</option>
+                    {offlineInventoryItems.map(item => (
+                      <option key={item.id} value={item.id}>{item.name}（系统库存：{Number(item.currentStock || 0)}）</option>
+                    ))}
+                  </select>
+                  {offlineCalibrationItemId && (() => {
+                    const item = offlineInventoryItems.find(i => i.id === Number(offlineCalibrationItemId));
+                    const sys = Number(item?.currentStock || 0);
+                    const actual = Number(offlineCalibrationActual);
+                    const delta = Number.isFinite(actual) ? actual - sys : null;
+                    return (
+                      <div className="text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 flex justify-between">
+                        <span>系统库存：<span className="text-indigo-700">{sys}</span></span>
+                        {delta !== null && delta !== 0 && (
+                          <span className={delta > 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                            差值：{delta > 0 ? '+' : ''}{delta}（{delta > 0 ? '校准入库' : '校准出库'}）
+                          </span>
+                        )}
+                        {delta === 0 && <span className="text-slate-400">无差异</span>}
+                      </div>
+                    );
+                  })()}
+                  <input
+                    type="number"
+                    value={offlineCalibrationActual}
+                    onChange={e => setOfflineCalibrationActual(e.target.value)}
+                    placeholder="实际盘点数量"
+                    min="0"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                  />
+                  <textarea
+                    value={offlineCalibrationRemark}
+                    onChange={e => setOfflineCalibrationRemark(e.target.value)}
+                    placeholder="校准原因/备注（可选）"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium h-16 resize-none"
+                  />
+                  <button
+                    onClick={recordCalibration}
+                    className="w-full bg-amber-600 text-white py-2.5 rounded-lg font-black text-xs hover:bg-amber-700"
+                  >
+                    📐 执行库存校准
+                  </button>
                 </div>
               </div>
 
