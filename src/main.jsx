@@ -643,38 +643,29 @@ const App = () => {
     try {
       const backupDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
 
-      // 🔒 防空机制：自动备份前先读取旧备份，如果旧备份数据量远大于当前数据，拒绝覆盖
-      if (trigger === 'auto') {
+      // 🔒 防空机制：首次调用时从 Firestore 初始化备份基准，之后用本地 ref 跟踪（省 Firestore 读取）
+      if (lastBackupSkuCountRef.current === 0) {
         try {
           const existingBackup = await getDoc(backupDocRef);
           if (existingBackup.exists()) {
-            const oldMeta = existingBackup.data()?._backup_meta;
-            const oldSkuCount = oldMeta?.skuCount || 0;
-            if (oldSkuCount > 5 && skus.length < oldSkuCount * 0.5) {
-              console.error('🚨 备份防空拦截：当前 SKU(' + skus.length + ') 远少于旧备份(' + oldSkuCount + ')，拒绝自动覆盖备份');
-              return false;
-            }
+            lastBackupSkuCountRef.current = existingBackup.data()?._backup_meta?.skuCount || 0;
+            console.log('💾 备份基准初始化:', lastBackupSkuCountRef.current, 'SKUs');
           }
         } catch (readErr) {
-          console.warn('⚠️ 读取旧备份失败，跳过本次自动备份以保安全:', readErr.message);
+          console.warn('⚠️ 读取旧备份基准失败:', readErr.message);
+        }
+      }
+      if (trigger === 'auto') {
+        if (lastBackupSkuCountRef.current > 5 && skus.length < lastBackupSkuCountRef.current * 0.5) {
+          console.error('🚨 备份防空拦截：当前 SKU(' + skus.length + ') 远少于备份基准(' + lastBackupSkuCountRef.current + ')，拒绝自动覆盖备份');
           return false;
         }
       } else if (trigger === 'manual') {
-        // 手动备份：仍然检查，但通过 confirm 让管理员确认
-        try {
-          const existingBackup = await getDoc(backupDocRef);
-          if (existingBackup.exists()) {
-            const oldMeta = existingBackup.data()?._backup_meta;
-            const oldSkuCount = oldMeta?.skuCount || 0;
-            if (oldSkuCount > 5 && skus.length < oldSkuCount * 0.5) {
-              const ok = window.confirm(
-                '⚠️ 安全警告！\n\n当前 SKU 数量(' + skus.length + ') 远少于旧备份(' + oldSkuCount + ')。\n\n覆盖备份可能导致数据永久丢失！确定要继续吗？'
-              );
-              if (!ok) return false;
-            }
-          }
-        } catch (readErr) {
-          console.warn('⚠️ 读取旧备份失败:', readErr.message);
+        if (lastBackupSkuCountRef.current > 5 && skus.length < lastBackupSkuCountRef.current * 0.5) {
+          const ok = window.confirm(
+            '⚠️ 安全警告！\n\n当前 SKU 数量(' + skus.length + ') 远少于备份基准(' + lastBackupSkuCountRef.current + ')。\n\n覆盖备份可能导致数据永久丢失！确定要继续吗？'
+          );
+          if (!ok) return false;
         }
       }
       const clean = (obj) => {
@@ -951,6 +942,11 @@ const App = () => {
 
       // -------- 5. 标记完成 --------
       cloudDataLoadedRef.current = true;
+      // 更新所有计数基准为恢复后的数据量，避免安全检查误拦截后续操作
+      remoteSkuCountRef.current = restoredSkus.length;
+      lastBackupSkuCountRef.current = restoredSkus.length;
+      lastSafeBackupCountRef.current = restoredSkus.length;
+      lastBackupJSONRef.current = ''; // 触发恢复后的自动备份
       // 延迟解锁，确保 React 渲染完毕后自动保存不会立即触发冲突
       setTimeout(() => {
         hasPendingChangesRef.current = false;
@@ -1065,7 +1061,8 @@ const App = () => {
           }
           // 🔒 标记：已成功接收到云端数据，后续才允许云端写入
           cloudDataLoadedRef.current = true;
-          remoteSkuCountRef.current = Math.max(remoteSkuCountRef.current, remoteData.length);
+          // 直接跟踪云端实际数量（而非峻值），避免正常删除后安全检查永久拦截
+          remoteSkuCountRef.current = remoteData.length;
           console.log('🔒 cloudDataLoadedRef = true，允许云端写入，云端 SKU 数:', remoteData.length);
           // 加载云端设置
           if (!hasPendingSettingsRef.current) {
