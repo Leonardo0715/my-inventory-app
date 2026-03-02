@@ -2780,21 +2780,10 @@ const App = () => {
       }
     }
 
-    // 补货建议: 现在下单应该补多少，才能覆盖 6.5 个月（安全周期）
-    // 直接使用推演数据（已包含PO到货和月度消耗），确保与库存推演表一致
-    const safeCoverageMonths = 6.5;
-    const safeCoverageDays = Math.ceil(safeCoverageMonths * 30);
-    
-    // 从推演数据找到安全覆盖期末的库存量
-    const safeEndIdx = Math.min(safeCoverageDays, f.data.length - 1);
-    const safeEndStock = f.data[safeEndIdx]?.stock ?? 0;
-    
-    if (safeEndStock > 0) {
-      // 安全期末仍有库存，不需要补货
-      suggestQty = 0;
-    } else {
-      // 找到推演中第一个断货日，计算从那天到安全期末需要多少库存
-      // 方法：统计安全期内所有断货天数的累计消耗
+    // 补货建议: 现在下单应该补多少，才能在预警天数(warningDays)内不断货
+    // 公式: suggestQty = 预警期内总消耗 - 当前库存 - 预警期内PO到货量
+    // 使用与推演引擎相同的消耗率(getMonthlySalesForForecast)
+    {
       const monthlySalesForCalc = getMonthlySalesForForecast(sku, new Date());
       const nonZeroRates = monthlySalesForCalc.filter(v => v > 0);
       const avgMonthlyRate = nonZeroRates.length > 0 ? nonZeroRates.reduce((a, b) => a + b, 0) / nonZeroRates.length : 0;
@@ -2802,15 +2791,33 @@ const App = () => {
         const r = Number(m) / 30;
         return r > 0 ? r : (avgMonthlyRate / 30);
       });
-      
-      let deficit = 0;
-      for (let i = 0; i <= safeEndIdx; i++) {
-        if (f.data[i].stock <= 0) {
-          const monthIdx = new Date(f.data[i].date).getMonth();
-          deficit += dailyRatesCalc[monthIdx];
-        }
+
+      // 1. 计算预警期内总消耗
+      const todayDate = new Date();
+      let totalConsumption = 0;
+      for (let i = 0; i < warningDays; i++) {
+        const d = new Date(todayDate);
+        d.setDate(todayDate.getDate() + i);
+        totalConsumption += dailyRatesCalc[d.getMonth()];
       }
-      suggestQty = Math.max(0, Math.ceil(deficit));
+
+      // 2. 计算预警期内PO到货总量（排除已取消）
+      let totalIncoming = 0;
+      (sku.pos || []).forEach(po => {
+        if (po.status === 'cancelled') return;
+        const arrival = new Date(po.orderDate);
+        if (isNaN(arrival.getTime())) return;
+        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
+        arrival.setDate(arrival.getDate() + totalLT);
+        const daysFromNow = (arrival - todayDate) / 86400000;
+        if (daysFromNow >= 0 && daysFromNow < warningDays) {
+          totalIncoming += Number(po.qty || 0);
+        }
+      });
+
+      // 3. 需要补的量 = 总消耗 - 当前库存 - 预警期内到货
+      const currentStock = Number(sku.currentStock || 0);
+      suggestQty = Math.max(0, Math.ceil(totalConsumption - currentStock - totalIncoming));
     }
     
     // 计算每个月的有货状态（从当前日期往后推12个月）
