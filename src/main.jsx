@@ -1117,11 +1117,11 @@ const App = () => {
               // 自动将 ALLOWED_EMAILS 中未注册的用户补充到 userRoles
               const merged = { ...remoteRoles };
               ALLOWED_EMAILS.forEach(e => {
-                if (!merged[e]) merged[e] = { role: DEFAULT_ADMIN_EMAILS.includes(e) ? 'admin' : 'editor', features: DEFAULT_ADMIN_EMAILS.includes(e) ? [...ALL_FEATURE_KEYS] : [] };
+                if (!merged[e]) merged[e] = { role: DEFAULT_ADMIN_EMAILS.includes(e) ? 'admin' : 'viewer', features: DEFAULT_ADMIN_EMAILS.includes(e) ? [...ALL_FEATURE_KEYS] : [] };
               });
-              // 确保当前登录用户也在列表中
+              // 确保当前登录用户也在列表中（默认只读，等待管理员分配权限）
               const curEmail = (user?.email || '').toLowerCase();
-              if (curEmail && !merged[curEmail]) merged[curEmail] = { role: 'editor', features: [] };
+              if (curEmail && !merged[curEmail]) merged[curEmail] = { role: 'viewer', features: [] };
               setUserRoles(merged);
             }
           } else {
