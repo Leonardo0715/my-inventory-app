@@ -3582,12 +3582,13 @@ const App = () => {
                         <div className="mt-1 text-[10px] font-medium text-slate-500">
                           {needOrder
                             ? `补货后可周转至: ${(() => {
-                                const fData = currentDashSku?.forecast?.data || [];
-                                if (fData.length === 0) return '--';
-                                // 模拟：在当前预测库存基础上加 suggestQty，找第一个归零日
-                                const idx = fData.findIndex(d => (d.stock + qty) <= 0);
-                                if (idx === -1) return `${new Date(fData[fData.length - 1].date).toLocaleDateString()} 之后`;
-                                return new Date(fData[idx].date).toLocaleDateString();
+                                if (!currentDashSku) return '--';
+                                // 用推演引擎重新模拟：当前库存 + 建议补货量，复用年度销量数据
+                                const simSku = { ...currentDashSku, currentStock: Number(currentDashSku.currentStock || 0) + qty };
+                                const simForecast = generateForecast(simSku, 730);
+                                const simIdx = simForecast.data.findIndex(d => d.stock <= 0);
+                                if (simIdx === -1) return `${new Date(simForecast.data[simForecast.data.length - 1].date).toLocaleDateString()} 之后`;
+                                return new Date(simForecast.data[simIdx].date).toLocaleDateString();
                               })()}`
                             : '当前库存充足，无需补货'}
                         </div>
