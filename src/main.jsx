@@ -461,6 +461,8 @@ const App = () => {
   const hasPendingSettingsRef = useRef(false);
   // 🔒 核心防护：只有成功接收过云端数据后才允许写回云端
   const cloudDataLoadedRef = useRef(false);
+  // 🔒 跟踪云端数据规模，防止少量数据覆盖大量数据
+  const remoteSkuCountRef = useRef(0);
   // 备份状态
   const [lastBackupInfo, setLastBackupInfo] = useState(null);
 
@@ -726,6 +728,8 @@ const App = () => {
       hasPendingChangesRef.current = false;
       hasPendingSettingsRef.current = false;
       lastRemoteItemsJSONRef.current = '';
+      remoteSkuCountRef.current = 0;
+      hydratedRef.current = false; // 允许重新初始化本地数据
       setLoginEmail('');
       setLoginPassword('');
       setLoginError('');
@@ -951,7 +955,8 @@ const App = () => {
           }
           // 🔒 标记：已成功接收到云端数据，后续才允许云端写入
           cloudDataLoadedRef.current = true;
-          console.log('🔒 cloudDataLoadedRef = true，允许云端写入');
+          remoteSkuCountRef.current = Math.max(remoteSkuCountRef.current, remoteData.length);
+          console.log('🔒 cloudDataLoadedRef = true，允许云端写入，云端 SKU 数:', remoteData.length);
           // 加载云端设置
           if (!hasPendingSettingsRef.current) {
             if (docSnap.data().warningDays) setWarningDays(docSnap.data().warningDays);
@@ -1103,6 +1108,11 @@ const App = () => {
       console.log('⏸️ 数据恢复进行中，跳过自动云端同步');
       return;
     }
+    // 🔒 数据量安全检查：防止少量数据覆盖大量数据
+    if (remoteSkuCountRef.current > 5 && skus.length < remoteSkuCountRef.current * 0.5) {
+      console.error('🚨 安全拦截：当前 SKU 数(' + skus.length + ') 远少于云端(' + remoteSkuCountRef.current + ')，禁止写入以防数据丢失');
+      return;
+    }
 
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
     const localJSON = JSON.stringify({ items: skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals });
@@ -1146,6 +1156,11 @@ const App = () => {
   // --- 4.3 设置自动云端保存 ---
   useEffect(() => {
     if (!db || !user || !isInitialLoadDone || !canManagePermissions) return;
+    // 🔒 必须在成功接收云端数据后才允许写入设置
+    if (!cloudDataLoadedRef.current) {
+      console.log('⏸️ 尚未接收云端数据，跳过设置云端写入');
+      return;
+    }
     hasPendingSettingsRef.current = true; // 立即标记，防止 onSnapshot 覆盖本地设置
     
     const settingsTimer = setTimeout(async () => {
