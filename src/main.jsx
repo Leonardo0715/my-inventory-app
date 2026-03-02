@@ -3530,7 +3530,7 @@ const App = () => {
                         </div>
                         <div className="mt-1 text-[10px] font-medium text-slate-500">
                           {needOrder
-                            ? `截止下单日: ${currentDashSku?.orderDateStr || '--'}`
+                            ? `补货后可周转至: ${(() => { const d = new Date(); d.setDate(d.getDate() + 195); return d.toLocaleDateString(); })()}`
                             : '当前库存充足，无需补货'}
                         </div>
                       </div>
