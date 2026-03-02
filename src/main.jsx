@@ -61,6 +61,7 @@ const PURPOSE_OPTIONS = [
   { key: 'return', label: '退货处理' },
   { key: 'gift', label: '赠品' },
   { key: 'scrap', label: '损耗报废' },
+  { key: 'calibration', label: '库存校准' },
 ];
 const PURPOSE_KEYS = PURPOSE_OPTIONS.map(p => p.key);
 const getPurposeLabel = (purpose) => PURPOSE_OPTIONS.find(p => p.key === purpose)?.label || purpose || '寄样';
