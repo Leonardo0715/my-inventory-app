@@ -499,7 +499,7 @@ const App = () => {
       const features = Array.isArray(mapped.features) ? mapped.features.filter(f => ALL_FEATURE_KEYS.includes(f)) : ALL_FEATURE_KEYS;
       return { currentUserRole: role, currentUserFeatures: features };
     }
-    return { currentUserRole: 'editor', currentUserFeatures: [] };
+    return { currentUserRole: 'viewer', currentUserFeatures: [] };
   }, [currentUserEmail, userRoles]);
 
   const hasFeature = (featureKey) => currentUserRole === 'admin' || currentUserFeatures.includes(featureKey);
@@ -1961,20 +1961,53 @@ const App = () => {
     setOfflineTxRemark('');
   };
 
-  // 管理员编辑出库记录
+  // 管理员编辑出库记录（同步回退/补偿库存）
   const saveEditingOfflineLog = () => {
     if (!editingOfflineLog) return;
     const { id, ...updates } = editingOfflineLog;
+    const oldLog = offlineInventoryLogs.find(log => log.id === id);
+    if (!oldLog) return;
+    const oldQty = Number(oldLog.qty || 0);
+    const newQty = Math.max(0, Number(updates.qty) || 0);
+    const qtyDelta = newQty - oldQty;
+    if (qtyDelta !== 0) {
+      setOfflineInventoryItems(prev => prev.map(item => {
+        if (item.id !== oldLog.itemId) return item;
+        const currentStock = Number(item.currentStock || 0);
+        const outboundTotal = Number(item.outboundTotal || 0);
+        const inboundTotal = Number(item.inboundTotal || 0);
+        if (oldLog.type === 'out') {
+          return { ...item, currentStock: Math.max(0, currentStock - qtyDelta), outboundTotal: Math.max(0, outboundTotal + qtyDelta) };
+        }
+        return { ...item, currentStock: Math.max(0, currentStock + qtyDelta), inboundTotal: Math.max(0, inboundTotal + qtyDelta) };
+      }));
+    }
     setOfflineInventoryLogs(prev => prev.map(log => {
       if (log.id !== id) return log;
-      return { ...log, ...updates, qty: Math.max(0, Number(updates.qty) || 0) };
+      return { ...log, ...updates, qty: newQty };
     }));
     setEditingOfflineLog(null);
   };
 
-  // 管理员删除出库记录
+  // 管理员删除出库记录（回退库存）
   const deleteOfflineLog = (logId) => {
-    if (!confirm('确认删除此出库记录？此操作不可撤销。')) return;
+    if (!confirm('确认删除此记录？库存将自动回退。')) return;
+    const targetLog = offlineInventoryLogs.find(log => log.id === logId);
+    if (targetLog) {
+      const qty = Number(targetLog.qty || 0);
+      if (qty > 0) {
+        setOfflineInventoryItems(prev => prev.map(item => {
+          if (item.id !== targetLog.itemId) return item;
+          const currentStock = Number(item.currentStock || 0);
+          const outboundTotal = Number(item.outboundTotal || 0);
+          const inboundTotal = Number(item.inboundTotal || 0);
+          if (targetLog.type === 'out') {
+            return { ...item, currentStock: currentStock + qty, outboundTotal: Math.max(0, outboundTotal - qty) };
+          }
+          return { ...item, currentStock: Math.max(0, currentStock - qty), inboundTotal: Math.max(0, inboundTotal - qty) };
+        }));
+      }
+    }
     setOfflineInventoryLogs(prev => prev.filter(log => log.id !== logId));
     setEditingOfflineLog(null);
   };
@@ -2512,8 +2545,8 @@ const App = () => {
       
       let incomingQty = 0;
       sku.pos?.forEach(po => {
-        // 排除已取消的采购单
-        if (po.status === 'cancelled') return;
+        // 排除已取消和预下单的采购单
+        if (po.status === 'cancelled' || po.status === 'pre_order') return;
         const arrival = new Date(po.orderDate);
         if (isNaN(arrival.getTime())) return; // 无效日期跳过
         const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
@@ -5215,11 +5248,11 @@ const App = () => {
                           {/* 断货预测日 */}
                           <td className="py-4 text-center">
                               {sku.finalStockOutDate !== '安全' ? (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 animate-pulse">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold ${dashboardTheme === 'dark' ? 'bg-red-900/30 text-red-400' : 'bg-red-100 text-red-800'} animate-pulse`}>
                                   {sku.finalStockOutDate}
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold ${dashboardTheme === 'dark' ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-100 text-emerald-800'}`}>
                                   安全
                                 </span>
                               )}
@@ -5235,7 +5268,7 @@ const App = () => {
                                 </span>
                               </div>
                             ) : (
-                              <span className="text-sm text-slate-400 dark:text-slate-600 font-medium italic">无需操作</span>
+                              <span className={`text-sm font-medium italic ${dashboardTheme === 'dark' ? 'text-slate-600' : 'text-slate-400'}`}>无需操作</span>
                             )}
                           </td>
                           
