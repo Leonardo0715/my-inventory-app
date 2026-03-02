@@ -3494,7 +3494,7 @@ const App = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-2 gap-3 text-xs">
                 <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between shadow-sm">
                   <div>
                     <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">当前商品覆盖能力</div>
@@ -3514,39 +3514,32 @@ const App = () => {
                     D
                   </div>
                 </div>
-                <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between shadow-sm col-span-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">今日下单推荐补货</div>
-                    <div className="mt-2 flex items-baseline gap-2">
-                      <span className="text-2xl font-black text-slate-900">
-                        {replenishmentRows.reduce((s, r) => s + r.suggestQty, 0).toLocaleString()}
-                      </span>
-                      <span className="text-[10px] font-bold text-slate-400">件 / {replenishmentRows.length} 个 SKU</span>
-                    </div>
-                    {replenishmentRows.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {replenishmentRows.slice(0, 6).map(row => (
-                          <span key={row.id} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                            row.stockoutDate !== '安全' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'
-                          }`}>
-                            {row.name}
-                            <span className="font-black">{Math.round(row.suggestQty).toLocaleString()}</span>
+                {(() => {
+                  const currentDashSku = dashboardData.find(d => d.id === selectedSkuId);
+                  const qty = Math.round(Number(currentDashSku?.suggestQty || 0));
+                  const needOrder = qty > 0;
+                  return (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between shadow-sm">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">今日下单推荐补货</div>
+                        <div className="mt-2 flex items-baseline gap-2">
+                          <span className={`text-2xl font-black ${needOrder ? 'text-rose-600' : 'text-emerald-600'}`}>
+                            {qty.toLocaleString()}
                           </span>
-                        ))}
-                        {replenishmentRows.length > 6 && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
-                            +{replenishmentRows.length - 6} 更多
-                          </span>
-                        )}
+                          <span className="text-[10px] font-bold text-slate-400">件</span>
+                        </div>
+                        <div className="mt-1 text-[10px] font-medium text-slate-500">
+                          {needOrder
+                            ? `截止下单日: ${currentDashSku?.orderDateStr || '--'}`
+                            : '当前库存充足，无需补货'}
+                        </div>
                       </div>
-                    ) : (
-                      <div className="mt-1 text-[10px] text-emerald-600 font-medium">所有 SKU 库存充足，无需补货</div>
-                    )}
-                  </div>
-                  <div className={`h-10 w-10 rounded-full flex items-center justify-center font-black text-xs ${replenishmentRows.length > 0 ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                    R
-                  </div>
-                </div>
+                      <div className={`h-10 w-10 rounded-full flex items-center justify-center font-black text-xs ${needOrder ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                        R
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </header>
             
