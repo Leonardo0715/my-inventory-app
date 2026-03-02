@@ -426,6 +426,8 @@ const App = () => {
   const [offlineTxTrackingNo, setOfflineTxTrackingNo] = useState('');
   const [offlineSelectedItemId, setOfflineSelectedItemId] = useState(null);
   const [offlineOverviewQuery, setOfflineOverviewQuery] = useState('');
+  const [outLogFilters, setOutLogFilters] = useState({ sku: '', purpose: '', account: '', customer: '', trackingNo: '' });
+  const [outLogFilterOpen, setOutLogFilterOpen] = useState('');
   const [deleteApprovals, setDeleteApprovals] = useState([]);
   const [userRoles, setUserRoles] = useState({});
   const [roleTargetEmail, setRoleTargetEmail] = useState('');
@@ -2130,6 +2132,28 @@ const App = () => {
   const offlineOutboundSummaryLogs = useMemo(() => {
     return offlineInventoryLogs.filter(log => log.type === 'out');
   }, [offlineInventoryLogs]);
+
+  const filteredOutboundSummaryLogs = useMemo(() => {
+    return offlineOutboundSummaryLogs.filter(log => {
+      if (outLogFilters.sku && log.itemName !== outLogFilters.sku) return false;
+      if (outLogFilters.purpose && log.purpose !== outLogFilters.purpose) return false;
+      if (outLogFilters.account && log.account !== outLogFilters.account) return false;
+      if (outLogFilters.customer && (log.customerName || '') !== outLogFilters.customer) return false;
+      if (outLogFilters.trackingNo && (log.trackingNo || '') !== outLogFilters.trackingNo) return false;
+      return true;
+    });
+  }, [offlineOutboundSummaryLogs, outLogFilters]);
+
+  const outLogFilterOptions = useMemo(() => {
+    const unique = (arr) => [...new Set(arr)].filter(Boolean).sort();
+    return {
+      sku: unique(offlineOutboundSummaryLogs.map(l => l.itemName)),
+      purpose: unique(offlineOutboundSummaryLogs.map(l => l.purpose)),
+      account: unique(offlineOutboundSummaryLogs.map(l => l.account)),
+      customer: unique(offlineOutboundSummaryLogs.map(l => l.customerName)),
+      trackingNo: unique(offlineOutboundSummaryLogs.map(l => l.trackingNo)),
+    };
+  }, [offlineOutboundSummaryLogs]);
 
   const pendingDeleteApprovals = useMemo(() => deleteApprovals.filter(item => item.status === 'pending'), [deleteApprovals]);
   const reviewedDeleteApprovals = useMemo(() => deleteApprovals.filter(item => item.status !== 'pending'), [deleteApprovals]);
@@ -4520,26 +4544,106 @@ const App = () => {
                   </div>
 
                   <div className="flex flex-col min-h-0">
-                    <div className="px-4 py-2 border-b bg-slate-50/80 text-xs font-black text-slate-600">全局出库汇总记录</div>
+                    <div className="px-4 py-2 border-b bg-slate-50/80 text-xs font-black text-slate-600 flex items-center justify-between">
+                      <span>全局出库汇总记录{Object.values(outLogFilters).some(Boolean) ? ` (筛选中: ${filteredOutboundSummaryLogs.length}/${offlineOutboundSummaryLogs.length})` : ''}</span>
+                      {Object.values(outLogFilters).some(Boolean) && (
+                        <button onClick={() => setOutLogFilters({ sku: '', purpose: '', account: '', customer: '', trackingNo: '' })} className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold">清除筛选</button>
+                      )}
+                    </div>
                     <div className="flex-1 overflow-auto">
                       <table className="w-full text-left text-xs">
-                        <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase">
+                        <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase z-10">
                           <tr>
                             <th className="px-4 py-3">时间</th>
-                            <th className="px-4 py-3">SKU</th>
-                            <th className="px-4 py-3">用途</th>
+                            <th className="px-4 py-3 relative">
+                              <div className="flex items-center gap-1">
+                                <span>SKU</span>
+                                <button onClick={() => setOutLogFilterOpen(prev => prev === 'sku' ? '' : 'sku')} className={`w-4 h-4 flex items-center justify-center rounded ${outLogFilters.sku ? 'bg-indigo-600 text-white' : 'hover:bg-slate-200 text-slate-400'}`}>
+                                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M0 0h10L6 5v4l-2 1V5z"/></svg>
+                                </button>
+                              </div>
+                              {outLogFilterOpen === 'sku' && (
+                                <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-2 z-50 min-w-[160px] max-h-48 overflow-auto normal-case">
+                                  <button onClick={() => { setOutLogFilters(f => ({ ...f, sku: '' })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium ${!outLogFilters.sku ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>全部</button>
+                                  {outLogFilterOptions.sku.map(v => (
+                                    <button key={v} onClick={() => { setOutLogFilters(f => ({ ...f, sku: v })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium truncate ${outLogFilters.sku === v ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>{v}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </th>
+                            <th className="px-4 py-3 relative">
+                              <div className="flex items-center gap-1">
+                                <span>用途</span>
+                                <button onClick={() => setOutLogFilterOpen(prev => prev === 'purpose' ? '' : 'purpose')} className={`w-4 h-4 flex items-center justify-center rounded ${outLogFilters.purpose ? 'bg-indigo-600 text-white' : 'hover:bg-slate-200 text-slate-400'}`}>
+                                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M0 0h10L6 5v4l-2 1V5z"/></svg>
+                                </button>
+                              </div>
+                              {outLogFilterOpen === 'purpose' && (
+                                <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-2 z-50 min-w-[140px] max-h-48 overflow-auto normal-case">
+                                  <button onClick={() => { setOutLogFilters(f => ({ ...f, purpose: '' })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium ${!outLogFilters.purpose ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>全部</button>
+                                  {outLogFilterOptions.purpose.map(v => (
+                                    <button key={v} onClick={() => { setOutLogFilters(f => ({ ...f, purpose: v })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium ${outLogFilters.purpose === v ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>{getPurposeLabel(v)}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </th>
                             <th className="px-4 py-3 text-right">出库数量</th>
-                            <th className="px-4 py-3">操作账号</th>
-                            <th className="px-4 py-3">客户 / 收件</th>
-                            <th className="px-4 py-3">快递单号</th>
+                            <th className="px-4 py-3 relative">
+                              <div className="flex items-center gap-1">
+                                <span>操作账号</span>
+                                <button onClick={() => setOutLogFilterOpen(prev => prev === 'account' ? '' : 'account')} className={`w-4 h-4 flex items-center justify-center rounded ${outLogFilters.account ? 'bg-indigo-600 text-white' : 'hover:bg-slate-200 text-slate-400'}`}>
+                                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M0 0h10L6 5v4l-2 1V5z"/></svg>
+                                </button>
+                              </div>
+                              {outLogFilterOpen === 'account' && (
+                                <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-2 z-50 min-w-[180px] max-h-48 overflow-auto normal-case">
+                                  <button onClick={() => { setOutLogFilters(f => ({ ...f, account: '' })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium ${!outLogFilters.account ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>全部</button>
+                                  {outLogFilterOptions.account.map(v => (
+                                    <button key={v} onClick={() => { setOutLogFilters(f => ({ ...f, account: v })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium truncate ${outLogFilters.account === v ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>{v}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </th>
+                            <th className="px-4 py-3 relative">
+                              <div className="flex items-center gap-1">
+                                <span>客户</span>
+                                <button onClick={() => setOutLogFilterOpen(prev => prev === 'customer' ? '' : 'customer')} className={`w-4 h-4 flex items-center justify-center rounded ${outLogFilters.customer ? 'bg-indigo-600 text-white' : 'hover:bg-slate-200 text-slate-400'}`}>
+                                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M0 0h10L6 5v4l-2 1V5z"/></svg>
+                                </button>
+                              </div>
+                              {outLogFilterOpen === 'customer' && (
+                                <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-2 z-50 min-w-[160px] max-h-48 overflow-auto normal-case">
+                                  <button onClick={() => { setOutLogFilters(f => ({ ...f, customer: '' })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium ${!outLogFilters.customer ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>全部</button>
+                                  {outLogFilterOptions.customer.map(v => (
+                                    <button key={v} onClick={() => { setOutLogFilters(f => ({ ...f, customer: v })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium truncate ${outLogFilters.customer === v ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>{v || '(无客户)'}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </th>
+                            <th className="px-4 py-3 relative">
+                              <div className="flex items-center gap-1">
+                                <span>快递单号</span>
+                                <button onClick={() => setOutLogFilterOpen(prev => prev === 'trackingNo' ? '' : 'trackingNo')} className={`w-4 h-4 flex items-center justify-center rounded ${outLogFilters.trackingNo ? 'bg-indigo-600 text-white' : 'hover:bg-slate-200 text-slate-400'}`}>
+                                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M0 0h10L6 5v4l-2 1V5z"/></svg>
+                                </button>
+                              </div>
+                              {outLogFilterOpen === 'trackingNo' && (
+                                <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-2 z-50 min-w-[160px] max-h-48 overflow-auto normal-case">
+                                  <button onClick={() => { setOutLogFilters(f => ({ ...f, trackingNo: '' })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium ${!outLogFilters.trackingNo ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>全部</button>
+                                  {outLogFilterOptions.trackingNo.map(v => (
+                                    <button key={v} onClick={() => { setOutLogFilters(f => ({ ...f, trackingNo: v })); setOutLogFilterOpen(''); }} className={`block w-full text-left px-2 py-1 rounded text-xs font-medium truncate ${outLogFilters.trackingNo === v ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100'}`}>{v || '(无单号)'}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </th>
                             <th className="px-4 py-3">备注</th>
                             {canManagePermissions && <th className="px-4 py-3 text-center">操作</th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y">
-                          {offlineOutboundSummaryLogs.length === 0 ? (
-                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={canManagePermissions ? 9 : 8}>暂无出库汇总记录</td></tr>
-                          ) : offlineOutboundSummaryLogs.map(log => (
+                          {filteredOutboundSummaryLogs.length === 0 ? (
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={canManagePermissions ? 9 : 8}>{Object.values(outLogFilters).some(Boolean) ? '无匹配的出库记录' : '暂无出库汇总记录'}</td></tr>
+                          ) : filteredOutboundSummaryLogs.map(log => (
                             <tr key={`out-${log.id}`} className="hover:bg-slate-50">
                               <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
                               <td className="px-4 py-3 font-bold text-slate-700">{log.itemName}</td>
