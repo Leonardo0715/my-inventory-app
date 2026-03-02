@@ -167,7 +167,7 @@ function sanitizeOfflineInventoryLogs(logs) {
       const itemId = Number.isFinite(Number(log.itemId)) ? Number(log.itemId) : null;
       const itemName = String(log.itemName ?? '');
       const type = log.type === 'out' ? 'out' : 'in';
-      const purpose = log.purpose === 'restock' ? 'restock' : (PURPOSE_KEYS.includes(log.purpose) ? log.purpose : 'normal');
+      const purpose = log.purpose === 'restock' ? 'restock' : (PURPOSE_KEYS.includes(log.purpose) ? log.purpose : 'sample');
       const qty = Math.max(0, Number(log.qty ?? 0) || 0);
       const account = String(log.account ?? '');
       const customerId = Number.isFinite(Number(log.customerId)) ? Number(log.customerId) : null;
@@ -2515,6 +2515,7 @@ const App = () => {
         // 排除已取消的采购单
         if (po.status === 'cancelled') return;
         const arrival = new Date(po.orderDate);
+        if (isNaN(arrival.getTime())) return; // 无效日期跳过
         const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
         arrival.setDate(arrival.getDate() + totalLT);
         if (arrival.toISOString().split('T')[0] === dateStr) incomingQty += Number(po.qty || 0);
@@ -3405,7 +3406,7 @@ const App = () => {
                              <input
                                type="number"
                                value={activeSku?.currentStock || 0}
-                               onChange={e => updateSku(activeSku.id, 'currentStock', clampNonNegativeInt(e.target.value, '当前库存'))}
+                               onChange={e => activeSku && updateSku(activeSku.id, 'currentStock', clampNonNegativeInt(e.target.value, '当前库存'))}
                                className="w-full bg-slate-50 border-2 border-slate-100 rounded-3xl p-6 font-mono text-3xl font-black focus:border-indigo-500 outline-none transition-all shadow-inner"
                              />
                            </div>
@@ -3454,7 +3455,7 @@ const App = () => {
                               <button onClick={exportPOsToJSON} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出数据">导出数据</button>
                               <button onClick={exportPOsToCSV} className="text-[11px] px-2 py-1 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-bold uppercase tracking-tighter" title="导出表格">导出表格</button>
                               <button onClick={importPOsFromJSON} className="text-[11px] px-2 py-1 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 font-bold uppercase tracking-tighter" title="导入 JSON">导入</button>
-                              <button onClick={() => addPO(activeSku.id)} className="bg-indigo-600 text-white p-2 rounded-xl hover:bg-indigo-700 active:scale-90 transition-all shadow-md"><Plus size={18}/></button>
+                              <button onClick={() => activeSku && addPO(activeSku.id)} className="bg-indigo-600 text-white p-2 rounded-xl hover:bg-indigo-700 active:scale-90 transition-all shadow-md"><Plus size={18}/></button>
                             </div>
                           </div>
                           {activeSku?.pos && activeSku.pos.length > 0 && (
@@ -4873,14 +4874,14 @@ const App = () => {
               {/* 状态甜甜圈/列表替代品 */}
               <div className="space-y-2 flex-1 overflow-y-auto min-h-0">
                 {[
-                  { label: '已下单 (Ordered)', count: poSummary.statusCounts.ordered, color: 'slate' },
-                  { label: '生产中 (In Production)', count: poSummary.statusCounts.production, color: 'amber' },
-                  { label: '一线运输中 (Shipping)', count: poSummary.statusCounts.shipping, color: 'blue' },
-                  { label: '尾程接收中 (Last Mile)', count: poSummary.statusCounts.inspection, color: 'violet' },
+                  { label: '已下单 (Ordered)', count: poSummary.statusCounts.ordered, bgClass: 'bg-slate-500', shadowClass: 'shadow-slate-500/50' },
+                  { label: '生产中 (In Production)', count: poSummary.statusCounts.production, bgClass: 'bg-amber-500', shadowClass: 'shadow-amber-500/50' },
+                  { label: '一线运输中 (Shipping)', count: poSummary.statusCounts.shipping, bgClass: 'bg-blue-500', shadowClass: 'shadow-blue-500/50' },
+                  { label: '尾程接收中 (Last Mile)', count: poSummary.statusCounts.inspection, bgClass: 'bg-violet-500', shadowClass: 'shadow-violet-500/50' },
                 ].map((item, i) => (
                   <div key={i} className={`flex items-center justify-between p-3 rounded-xl border ${dashboardTheme === 'dark' ? 'bg-slate-800/30 border-slate-700/50' : 'bg-slate-50 border-slate-100'}`}>
                     <div className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full bg-${item.color}-500 shadow-[0_0_8px_rgba(0,0,0,0.3)] shadow-${item.color}-500/50`}></div>
+                      <div className={`w-2 h-2 rounded-full ${item.bgClass} shadow-[0_0_8px_rgba(0,0,0,0.3)] ${item.shadowClass}`}></div>
                       <span className={`text-xs font-medium ${dashboardTheme === 'dark' ? 'text-slate-300' : 'text-slate-600'}`}>{item.label}</span>
                     </div>
                     <span className={`text-lg font-bold font-mono ${dashboardTheme === 'dark' ? 'text-white' : 'text-slate-800'}`}>{item.count}</span>
