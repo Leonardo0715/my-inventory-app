@@ -1086,8 +1086,18 @@ const App = () => {
   useEffect(() => {
     if (!db || !user || !cloudDataLoadedRef.current || skus.length === 0) return;
     if (isRestoringRef.current) return;
-    // 生成当前数据快照，仅数据变化时才触发备份
-    const currentJSON = JSON.stringify({ skus: skus.length, offline: offlineInventoryItems.length, logs: offlineInventoryLogs.length, approvals: deleteApprovals.length });
+    // 生成当前完整数据快照（包含内容），任何字段变化都会触发备份
+    const currentJSON = JSON.stringify({
+      skus,
+      offlineInventoryItems,
+      offlineInventoryLogs,
+      offlineRecipientDirectory,
+      deleteApprovals,
+      warningDays,
+      defaultSettings,
+      transportModes,
+      userRoles,
+    });
     if (currentJSON === lastBackupJSONRef.current) return;
     const timer = setTimeout(() => {
       lastBackupJSONRef.current = currentJSON;
