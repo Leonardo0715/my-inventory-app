@@ -453,30 +453,33 @@ const App = () => {
   // 设置状态 - 预警时间（天）
   const [warningDays, setWarningDays] = useState(225); // 约7.5个月
 
-  // 设置状态 - 预设参数（按运输方式分组）
+  // 设置状态 - 预设参数（生产周期 + 各运输方式天数 + 默认数量）
   const migrateDefaultSettings = (settings) => {
-    if (settings && (settings.sea || settings.air || settings.rail)) return settings; // 已经是新格式
-    // 旧格式迁移：{ defaultProdDays, defaultLeg1Days, ... } → 按运输方式分组
-    const old = settings || {};
-    const base = {
-      prodDays: old.defaultProdDays ?? 30,
-      leg1Days: old.defaultLeg1Days ?? 30,
-      leg2Days: old.defaultLeg2Days ?? 15,
-      leg3Days: old.defaultLeg3Days ?? 0,
-      qty: old.defaultQty ?? 1000
-    };
+    if (!settings) return { prodDays: 30, seaDays: 30, airDays: 7, railDays: 20, qty: 1000 };
+    // 已是新扁平格式
+    if ('seaDays' in settings) return settings;
+    // v2 嵌套格式 { sea: { prodDays, leg1Days, ... }, air: {...}, rail: {...} }
+    if (settings.sea || settings.air || settings.rail) {
+      return {
+        prodDays: settings.sea?.prodDays ?? 30,
+        seaDays: settings.sea?.leg1Days ?? 30,
+        airDays: settings.air?.leg1Days ?? 7,
+        railDays: settings.rail?.leg1Days ?? 20,
+        qty: settings.sea?.qty ?? 1000
+      };
+    }
+    // v1 旧格式 { defaultProdDays, defaultLeg1Days, ... }
     return {
-      sea: { ...base },
-      air: { prodDays: base.prodDays, leg1Days: 7, leg2Days: 5, leg3Days: 0, qty: base.qty },
-      rail: { prodDays: base.prodDays, leg1Days: 20, leg2Days: 10, leg3Days: 0, qty: base.qty }
+      prodDays: settings.defaultProdDays ?? 30,
+      seaDays: settings.defaultLeg1Days ?? 30,
+      airDays: 7,
+      railDays: 20,
+      qty: settings.defaultQty ?? 1000
     };
   };
   const [defaultSettings, setDefaultSettings] = useState({
-    sea:  { prodDays: 30, leg1Days: 30, leg2Days: 15, leg3Days: 0, qty: 1000 },
-    air:  { prodDays: 30, leg1Days: 7,  leg2Days: 5,  leg3Days: 0, qty: 1000 },
-    rail: { prodDays: 30, leg1Days: 20, leg2Days: 10, leg3Days: 0, qty: 1000 }
+    prodDays: 30, seaDays: 30, airDays: 7, railDays: 20, qty: 1000
   });
-  const [settingsModeTab, setSettingsModeTab] = useState('sea');
 
   // 防止 React.StrictMode 下开发环境 effect 双触发导致“重复初始化”
   const hydratedRef = useRef(false);
@@ -2452,9 +2455,8 @@ const App = () => {
     setSkus(prev => prev.map(s => {
       if (s.id === skuId) {
         const poNumber = generatePONumber(skuId);
-        const modeKey = 'sea'; // 新建PO默认使用第一种运输方式
-        const md = defaultSettings[modeKey] || defaultSettings.sea || { prodDays: 30, leg1Days: 30, leg2Days: 15, leg3Days: 0, qty: 1000 };
-        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: md.qty, prodDays: md.prodDays, leg1Mode: modeKey, leg1Days: md.leg1Days, leg2Mode: modeKey, leg2Days: md.leg2Days, leg3Mode: modeKey, leg3Days: md.leg3Days, status: 'ordered' };
+        const daysForMode = (mode) => defaultSettings[mode + 'Days'] || 30;
+        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: defaultSettings.qty || 1000, prodDays: defaultSettings.prodDays || 30, leg1Mode: 'sea', leg1Days: daysForMode('sea'), leg2Mode: 'sea', leg2Days: daysForMode('sea'), leg3Mode: 'sea', leg3Days: daysForMode('sea'), status: 'ordered' };
         return { ...s, pos: [...(s.pos || []), newPO] };
       }
       return s;
@@ -2462,7 +2464,16 @@ const App = () => {
   };
   const updatePO = (skuId, poId, field, value) => {
     if (!ensureEditPermission()) return;
-    setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => p.id === poId ? { ...p, [field]: value } : p) } : s));
+    setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => {
+      if (p.id !== poId) return p;
+      const updated = { ...p, [field]: value };
+      // 切换运输方式时自动填入对应默认天数
+      if (field === 'leg1Mode' || field === 'leg2Mode' || field === 'leg3Mode') {
+        const daysField = field.replace('Mode', 'Days');
+        updated[daysField] = defaultSettings[value + 'Days'] || 30;
+      }
+      return updated;
+    }) } : s));
   };
   const removePO = (skuId, poId) => {
     const sku = skus.find(s => s.id === skuId);
@@ -5897,56 +5908,34 @@ const App = () => {
                 </div>
               </div>
 
-              {/* 默认参数设置（按运输方式） */}
+              {/* 默认参数设置 */}
               <div className="space-y-4">
                 <h4 className="text-lg font-black text-slate-800 flex items-center gap-2">
-                  <Factory size={20} className="text-amber-600"/> 采购单默认参数（按运输方式）
+                  <Factory size={20} className="text-amber-600"/> 采购单默认参数
                 </h4>
-                {/* 运输方式 Tab */}
-                <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
-                  {transportModes.map(mode => {
-                    const iconMap = { sea: Ship, air: Plane, rail: Train };
-                    const ModeIcon = iconMap[mode.id] || Factory;
-                    return (
-                      <button
-                        key={mode.id}
-                        onClick={() => setSettingsModeTab(mode.id)}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-sm font-bold transition-all ${settingsModeTab === mode.id ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                      >
-                        <ModeIcon size={14}/> {mode.name}
-                      </button>
-                    );
-                  })}
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-2">生产周期（天）</label>
+                    <input type="number" value={defaultSettings.prodDays} onChange={e => setDefaultSettings(p => ({...p, prodDays: Number(e.target.value)}))} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-2 flex items-center gap-1"><Ship size={12} className="text-blue-500"/> {transportModes.find(m=>m.id==='sea')?.name || '海运'}（天）</label>
+                    <input type="number" value={defaultSettings.seaDays} onChange={e => setDefaultSettings(p => ({...p, seaDays: Number(e.target.value)}))} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-2 flex items-center gap-1"><Plane size={12} className="text-sky-500"/> {transportModes.find(m=>m.id==='air')?.name || '空运'}（天）</label>
+                    <input type="number" value={defaultSettings.airDays} onChange={e => setDefaultSettings(p => ({...p, airDays: Number(e.target.value)}))} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-2 flex items-center gap-1"><Train size={12} className="text-emerald-500"/> {transportModes.find(m=>m.id==='rail')?.name || '陆运'}（天）</label>
+                    <input type="number" value={defaultSettings.railDays} onChange={e => setDefaultSettings(p => ({...p, railDays: Number(e.target.value)}))} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-600 block mb-2">默认采购数量</label>
+                    <input type="number" value={defaultSettings.qty} onChange={e => setDefaultSettings(p => ({...p, qty: Number(e.target.value)}))} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
+                  </div>
                 </div>
-                {/* 当前运输方式的参数 */}
-                {(() => {
-                  const md = defaultSettings[settingsModeTab] || { prodDays: 30, leg1Days: 30, leg2Days: 15, leg3Days: 0, qty: 1000 };
-                  const updateField = (field, value) => setDefaultSettings(prev => ({ ...prev, [settingsModeTab]: { ...prev[settingsModeTab], [field]: Number(value) } }));
-                  return (
-                    <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                      <div>
-                        <label className="text-xs font-bold text-slate-600 block mb-2">生产周期（天）</label>
-                        <input type="number" value={md.prodDays} onChange={e => updateField('prodDays', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold text-slate-600 block mb-2">头程时效（天）</label>
-                        <input type="number" value={md.leg1Days} onChange={e => updateField('leg1Days', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold text-slate-600 block mb-2">二程时效（天）</label>
-                        <input type="number" value={md.leg2Days} onChange={e => updateField('leg2Days', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold text-slate-600 block mb-2">三程时效（天）</label>
-                        <input type="number" value={md.leg3Days} onChange={e => updateField('leg3Days', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold text-slate-600 block mb-2">默认采购数量</label>
-                        <input type="number" value={md.qty} onChange={e => updateField('qty', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium" />
-                      </div>
-                    </div>
-                  );
-                })()}
+                <p className="text-[10px] text-slate-500">新建采购单时，各运输段根据选择的运输方式自动填入对应天数</p>
               </div>
 
               {/* 关闭按钮 */}
