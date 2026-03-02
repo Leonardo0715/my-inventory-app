@@ -2107,9 +2107,10 @@ const App = () => {
       setOfflineSelectedCustomerId(String(offlineRecipientDirectory[0].id));
     }
 
-    const hasTxCustomer = offlineRecipientDirectory.some(customer => String(customer.id) === String(offlineTxCustomerId));
+    // 仅当已选客户被删除时才清空，不自动选第一个（寄样出库要求用户主动选择客户）
+    const hasTxCustomer = !offlineTxCustomerId || offlineRecipientDirectory.some(customer => String(customer.id) === String(offlineTxCustomerId));
     if (!hasTxCustomer) {
-      setOfflineTxCustomerId(String(offlineRecipientDirectory[0].id));
+      setOfflineTxCustomerId('');
     }
   }, [offlineRecipientDirectory, offlineSelectedCustomerId, offlineTxCustomerId]);
 
@@ -2123,10 +2124,10 @@ const App = () => {
       setOfflineTxProfileId('');
       return;
     }
-    const hasProfile = profiles.some(profile => String(profile.id) === String(offlineTxProfileId));
+    // 仅当已选 profile 被删除时清空，不自动选第一个（要求用户主动选择）
+    const hasProfile = !offlineTxProfileId || profiles.some(profile => String(profile.id) === String(offlineTxProfileId));
     if (!hasProfile) {
-      const defaultProfile = profiles.find(profile => profile.isDefault) || profiles[0];
-      setOfflineTxProfileId(String(defaultProfile.id));
+      setOfflineTxProfileId('');
     }
   }, [offlineTxSelectedCustomer, offlineTxProfileId]);
 
@@ -4241,26 +4242,20 @@ const App = () => {
                         onChange={e => setOfflineTxCustomerId(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
                       >
-                        {offlineRecipientDirectory.length === 0 ? (
-                          <option value="">请先在客户信息库新增客户</option>
-                        ) : (
-                          offlineRecipientDirectory.map(customer => (
-                            <option key={customer.id} value={customer.id}>{`${customer.platform || '未填平台'} / ${customer.name} / ${customer.identity || '-'}`}</option>
-                          ))
-                        )}
+                        <option value="">请选择客户（必填）</option>
+                        {offlineRecipientDirectory.map(customer => (
+                          <option key={customer.id} value={customer.id}>{`${customer.platform || '未填平台'} / ${customer.name} / ${customer.identity || '-'}`}</option>
+                        ))}
                       </select>
                       <select
                         value={offlineTxProfileId}
                         onChange={e => setOfflineTxProfileId(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
                       >
-                        {!offlineTxSelectedCustomer || (offlineTxSelectedCustomer.profiles || []).length === 0 ? (
-                          <option value="">该客户暂无收件信息，请先新增</option>
-                        ) : (
-                          (offlineTxSelectedCustomer.profiles || []).map(profile => (
-                            <option key={profile.id} value={profile.id}>{`${profile.label} · ${profile.receiver || '-'} · ${profile.phone || '-'} · ${profile.address}`}</option>
-                          ))
-                        )}
+                        <option value="">{!offlineTxSelectedCustomer || (offlineTxSelectedCustomer.profiles || []).length === 0 ? '该客户暂无收件信息，请先新增' : '请选择收件信息（必填）'}</option>
+                        {offlineTxSelectedCustomer && (offlineTxSelectedCustomer.profiles || []).map(profile => (
+                          <option key={profile.id} value={profile.id}>{`${profile.label} · ${profile.receiver || '-'} · ${profile.phone || '-'} · ${profile.address}`}</option>
+                        ))}
                       </select>
                       <input
                         type="text"
