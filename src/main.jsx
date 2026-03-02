@@ -3388,22 +3388,29 @@ const App = () => {
                   <div className="mt-2 space-y-1">
                     <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">12个月货态</div>
                     
-                    {/* PO到货月份指示器 - 只显示黄色点 */}
+                    {/* PO到货月份指示器 - 黄色=已确认 虚线=预下订单 */}
                     <div className="flex gap-0.5 h-3">
                       {item.monthlyPOs?.map((pos, idx) => {
                         if (pos.length === 0) {
                           return <div key={idx} className="flex-1" />;
                         }
                         
-                        // 如果这个月有PO，显示黄色点
-                        const poQty = pos.reduce((sum, po) => sum + (po.qty || 0), 0);
-                        const poInfo = pos.map(po => po.qty).join('+');
+                        const confirmedPOs = pos.filter(po => po.status !== 'pre_order');
+                        const preOrderPOs = pos.filter(po => po.status === 'pre_order');
+                        const confirmedQty = confirmedPOs.reduce((s, po) => s + (po.qty || 0), 0);
+                        const preOrderQty = preOrderPOs.reduce((s, po) => s + (po.qty || 0), 0);
+                        const titleParts = [];
+                        if (confirmedQty > 0) titleParts.push(`已确认 ${confirmedQty}件`);
+                        if (preOrderQty > 0) titleParts.push(`预下单 ${preOrderQty}件`);
+                        
+                        const hasConfirmed = confirmedPOs.length > 0;
+                        const hasPreOrder = preOrderPOs.length > 0;
                         
                         return (
                           <div
                             key={idx}
-                            className="flex-1 rounded-full bg-yellow-400 relative group"
-                            title={`${poInfo}件到货`}
+                            className={`flex-1 rounded-full relative ${hasConfirmed ? 'bg-yellow-400' : ''} ${!hasConfirmed && hasPreOrder ? 'border-2 border-dashed border-amber-400 bg-amber-50' : ''} ${hasConfirmed && hasPreOrder ? 'ring-1 ring-amber-400 ring-offset-1' : ''}`}
+                            title={titleParts.join(' + ')}
                           />
                         );
                       })}
