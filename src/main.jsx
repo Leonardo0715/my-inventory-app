@@ -981,55 +981,71 @@ const App = () => {
             setSelectedSkuId(prev => (prev && remoteData.some(s => s.id === prev)) ? prev : remoteData[0].id);
           }
         } else {
-          // 云端为空：用“本地现有/默认数据”初始化一次，避免后续刷新又回到初始
-          const bootstrap = (() => {
-            const local2 = loadLocalMemory(localKey);
-            if (local2 && Array.isArray(local2.skus) && local2.skus.length > 0) return sanitizeSkus(local2.skus);
-            return sanitizeSkus(DEFAULT_DATA);
-          })();
-          setSkus(bootstrap);
-          setSelectedSkuId(bootstrap[0]?.id ?? 1);
-          // 主动写入，确保云端 doc 被创建
-          const bootstrapOfflineItems = (() => {
-            const local2 = loadLocalMemory(localKey);
-            if (local2 && Array.isArray(local2.offlineInventoryItems)) return sanitizeOfflineInventoryItems(local2.offlineInventoryItems);
-            return [];
-          })();
-          const bootstrapOfflineLogs = (() => {
-            const local2 = loadLocalMemory(localKey);
-            if (local2 && Array.isArray(local2.offlineInventoryLogs)) return sanitizeOfflineInventoryLogs(local2.offlineInventoryLogs);
-            return [];
-          })();
-          const bootstrapDeleteApprovals = (() => {
-            const local2 = loadLocalMemory(localKey);
-            if (local2 && Array.isArray(local2.deleteApprovals)) return sanitizeDeleteApprovals(local2.deleteApprovals);
-            return [];
-          })();
-          const bootstrapRecipientDirectory = (() => {
-            const local2 = loadLocalMemory(localKey);
-            if (local2 && Array.isArray(local2.offlineRecipientDirectory)) return sanitizeRecipientDirectory(local2.offlineRecipientDirectory);
-            return [];
-          })();
-          setOfflineInventoryItems(bootstrapOfflineItems);
-          setOfflineInventoryLogs(bootstrapOfflineLogs);
-          setOfflineRecipientDirectory(bootstrapRecipientDirectory);
-          setDeleteApprovals(bootstrapDeleteApprovals);
-          setDoc(docRef, { items: bootstrap, offlineInventoryItems: bootstrapOfflineItems, offlineInventoryLogs: bootstrapOfflineLogs, offlineRecipientDirectory: bootstrapRecipientDirectory, deleteApprovals: bootstrapDeleteApprovals, warningDays, defaultSettings, transportModes, userRoles, lastUpdated: new Date().toISOString() }, { merge: true })
-            .then(() => { 
-              lastRemoteItemsJSONRef.current = JSON.stringify({
-                items: bootstrap,
-                offlineInventoryItems: bootstrapOfflineItems,
-                offlineInventoryLogs: bootstrapOfflineLogs,
-                offlineRecipientDirectory: bootstrapRecipientDirectory,
-                deleteApprovals: bootstrapDeleteApprovals,
-              });
-              cloudDataLoadedRef.current = true; // 初始化成功后允许后续同步
-              console.log('✅ 云端初始化成功');
-            })
-            .catch((e) => {
-              console.error('❌ 初始化云端失败:', e.code, e.message);
-              setSyncStatus('error');
-            });
+          // 🔒 云端文档不存在：可能是真新项目，也可能是 Firestore 异常
+          // 安全策略：先尝试从备份恢复，否则仅加载本地数据但不写入云端
+          console.warn('⚠️ 云端文档不存在 (docSnap.exists() === false)');
+          console.warn('⚠️ 当前用户:', user?.email);
+          
+          const tryRestoreFromBackup = async () => {
+            try {
+              const backupRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
+              const backupSnap = await getDoc(backupRef);
+              if (backupSnap.exists()) {
+                const bd = backupSnap.data();
+                const bItems = sanitizeSkus(bd.items || []);
+                if (bItems.length > 0) {
+                  console.log('🔄 发现云端备份，自动恢复中... SKU:', bItems.length);
+                  const bOfflineItems = sanitizeOfflineInventoryItems(bd.offlineInventoryItems || []);
+                  const bOfflineLogs = sanitizeOfflineInventoryLogs(bd.offlineInventoryLogs || []);
+                  const bRecipientDir = sanitizeRecipientDirectory(bd.offlineRecipientDirectory || []);
+                  const bApprovals = sanitizeDeleteApprovals(bd.deleteApprovals || []);
+                  setSkus(bItems);
+                  setOfflineInventoryItems(bOfflineItems);
+                  setOfflineInventoryLogs(bOfflineLogs);
+                  setOfflineRecipientDirectory(bRecipientDir);
+                  setDeleteApprovals(bApprovals);
+                  setSelectedSkuId(bItems[0]?.id ?? 1);
+                  if (bd.warningDays) setWarningDays(bd.warningDays);
+                  if (bd.defaultSettings) setDefaultSettings(bd.defaultSettings);
+                  if (bd.transportModes) setTransportModes(bd.transportModes);
+                  if (bd.userRoles) setUserRoles(bd.userRoles);
+                  const clean = (o) => { if (Array.isArray(o)) return o.map(clean); if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).filter(([,v])=>v!==undefined).map(([k,v])=>[k,clean(v)])); return o; };
+                  await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
+                  lastRemoteItemsJSONRef.current = JSON.stringify({ items: bItems, offlineInventoryItems: bOfflineItems, offlineInventoryLogs: bOfflineLogs, offlineRecipientDirectory: bRecipientDir, deleteApprovals: bApprovals });
+                  cloudDataLoadedRef.current = true;
+                  remoteSkuCountRef.current = bItems.length;
+                  console.log('✅ 从云端备份自动恢复成功！SKU:', bItems.length);
+                  setWarning('✅ 云端数据已从备份自动恢复（' + bItems.length + ' 个SKU）');
+                  return true;
+                }
+              }
+            } catch (e) {
+              console.warn('⚠️ 尝试从备份恢复失败:', e.message);
+            }
+            return false;
+          };
+
+          tryRestoreFromBackup().then((restored) => {
+            if (!restored) {
+              const local2 = loadLocalMemory(localKey);
+              if (local2 && Array.isArray(local2.skus) && local2.skus.length > 0) {
+                const localSkus = sanitizeSkus(local2.skus);
+                setSkus(localSkus);
+                setSelectedSkuId(localSkus[0]?.id ?? 1);
+                if (local2.offlineInventoryItems) setOfflineInventoryItems(sanitizeOfflineInventoryItems(local2.offlineInventoryItems));
+                if (local2.offlineInventoryLogs) setOfflineInventoryLogs(sanitizeOfflineInventoryLogs(local2.offlineInventoryLogs));
+                if (local2.offlineRecipientDirectory) setOfflineRecipientDirectory(sanitizeRecipientDirectory(local2.offlineRecipientDirectory));
+                if (local2.deleteApprovals) setDeleteApprovals(sanitizeDeleteApprovals(local2.deleteApprovals));
+                console.log('📂 已加载本地缓存数据，但不写入云端');
+              } else {
+                setSkus(sanitizeSkus(DEFAULT_DATA));
+                setSelectedSkuId(1);
+                console.log('📂 全新项目，使用默认数据但不自动写入云端');
+              }
+              // cloudDataLoadedRef 保持 false，禁止自动云端写入
+              console.warn('⚠️ 云端文档为空且无备份，cloudDataLoadedRef=false，禁止自动写入');
+            }
+          });
         }
 
         setIsInitialLoadDone(true);
