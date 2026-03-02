@@ -3545,7 +3545,14 @@ const App = () => {
                         </div>
                         <div className="mt-1 text-[10px] font-medium text-slate-500">
                           {needOrder
-                            ? `补货后可周转至: ${(() => { const d = new Date(); d.setDate(d.getDate() + 195); return d.toLocaleDateString(); })()}`
+                            ? `补货后可周转至: ${(() => {
+                                const fData = currentDashSku?.forecast?.data || [];
+                                if (fData.length === 0) return '--';
+                                // 模拟：在当前预测库存基础上加 suggestQty，找第一个归零日
+                                const idx = fData.findIndex(d => (d.stock + qty) <= 0);
+                                if (idx === -1) return `${new Date(fData[fData.length - 1].date).toLocaleDateString()} 之后`;
+                                return new Date(fData[idx].date).toLocaleDateString();
+                              })()}`
                             : '当前库存充足，无需补货'}
                         </div>
                       </div>
