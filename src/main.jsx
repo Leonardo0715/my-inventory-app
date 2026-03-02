@@ -2664,8 +2664,8 @@ const App = () => {
       
       let incomingQty = 0;
       sku.pos?.forEach(po => {
-        // 排除已取消和预下单的采购单
-        if (po.status === 'cancelled' || po.status === 'pre_order') return;
+        // 排除已取消的采购单（预下订单参与推演）
+        if (po.status === 'cancelled') return;
         const arrival = new Date(po.orderDate);
         if (isNaN(arrival.getTime())) return; // 无效日期跳过
         const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
@@ -3930,25 +3930,141 @@ const App = () => {
                                             <span>下单 {po.orderDate}</span>
                                             <span>预计到货 {arrivalDate}</span>
                                             <span className="text-[9px] bg-slate-100 rounded px-1.5 py-0.5">预下订单</span>
+                                            <button
+                                              onClick={(e) => { e.stopPropagation(); removePO(activeSku.id, po.id); }}
+                                              className="p-0.5 text-slate-300 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                              title="删除"
+                                            >
+                                              <Trash2 size={12}/>
+                                            </button>
                                           </div>
                                         )}
                                         {isExpanded && (
-                                          <div className="mt-3 space-y-2 border-t pt-3">
-                                            <div className="grid grid-cols-2 gap-2">
-                                              <div className="text-[10px] text-slate-500 font-bold">下单日期: {po.orderDate}</div>
-                                              <div className="text-[10px] text-slate-500 font-bold">预计到货: {arrivalDate}</div>
-                                              <div className="text-[10px] text-slate-500 font-bold">采购数量: {po.qty}</div>
-                                              <div className="text-[10px] text-slate-500 font-bold">生产周期: {po.prodDays}天</div>
+                                          <>
+                                          <input
+                                            type="text"
+                                            value={po.poNumber}
+                                            onChange={e => updatePO(activeSku.id, po.id, 'poNumber', e.target.value)}
+                                            className="text-sm font-black text-slate-700 bg-slate-100 rounded-lg px-3 py-2.5 w-full outline-none border border-slate-200 focus:border-slate-400 transition-colors mb-3 mt-2"
+                                          />
+                                          <div className="grid grid-cols-2 gap-3 mb-3 font-bold uppercase text-xs">
+                                            <div>
+                                              <label className="text-[9px] font-black text-slate-400 block mb-1">下单日期</label>
+                                              <input type="date" value={po.orderDate} onChange={e => updatePO(activeSku.id, po.id, 'orderDate', e.target.value)} className="text-sm text-slate-600 bg-transparent outline-none w-full" />
                                             </div>
-                                            <div className="flex items-center gap-1 pt-1">
-                                              <select value={po.status} onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)} className="text-[10px] border rounded px-2 py-1 font-bold">
-                                                {['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].map(s => (
-                                                  <option key={s} value={s}>{['预下订单', '已下单', '取消订单', '生产中', '生产完成', '头程发货', '头程到货', '二程发货', '二程到货', '查验中', '提货中', '到达保税仓', '待理货上架', '已理货上架'][['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].indexOf(s)]}</option>
-                                                ))}
+                                            <div>
+                                              <label className="text-[9px] font-black text-slate-400 block mb-1">采购状态</label>
+                                              <select
+                                                value={po.status || 'pre_order'}
+                                                onChange={e => updatePO(activeSku.id, po.id, 'status', e.target.value)}
+                                                className="text-xs font-black bg-slate-100 rounded px-2 py-1 border border-slate-300 focus:outline-none focus:border-slate-500 w-full"
+                                              >
+                                                <option value="pre_order">预下订单</option>
+                                                <option value="ordered">已下单</option>
+                                                <option value="cancelled">取消订单</option>
+                                                <option value="in_production">生产中</option>
+                                                <option value="prod_complete">生产完成</option>
+                                                <option value="leg1_shipped">头程发货</option>
+                                                <option value="leg1_arrived">头程到货</option>
+                                                <option value="leg2_shipped">二程发货</option>
+                                                <option value="leg2_arrived">二程到货</option>
+                                                <option value="inspecting">查验中</option>
+                                                <option value="picking">提货中</option>
+                                                <option value="bonded_warehouse">到达保税仓</option>
+                                                <option value="pending_shelving">待理货上架</option>
+                                                <option value="shelved">已理货上架</option>
                                               </select>
-                                              <button onClick={() => removePO(activeSku.id, po.id)} className="text-[10px] text-rose-500 hover:text-rose-700 font-bold px-2 py-1 rounded hover:bg-rose-50">删除</button>
                                             </div>
                                           </div>
+                                          <div className="grid grid-cols-2 gap-3 mb-3 font-bold text-xs">
+                                            <div><label className="text-[9px] font-black text-slate-400 block mb-1"></label></div>
+                                            <div className="text-right">
+                                              <label className="text-[9px] font-black text-slate-400 block mb-1">采购数量</label>
+                                              <input
+                                                type="number"
+                                                value={po.qty}
+                                                onChange={e => updatePO(activeSku.id, po.id, 'qty', clampNonNegativeInt(e.target.value, '采购数量'))}
+                                                className="text-slate-600 font-black bg-transparent w-full text-right outline-none font-mono text-xs"
+                                              />
+                                            </div>
+                                          </div>
+                                          <div className="space-y-1 bg-white/50 p-2 rounded-lg border border-slate-100 text-[10px] font-bold mb-3">
+                                             <div className="flex justify-between items-center text-slate-500 text-[9px]">
+                                                <span><Factory size={9} className="inline mr-1"/>生产周期</span>
+                                                <div className="flex items-center gap-1">
+                                                  <input
+                                                    type="number"
+                                                    value={po.prodDays}
+                                                    onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
+                                                    className="w-12 text-right bg-transparent border-b border-slate-200 text-xs"
+                                                  />天
+                                                </div>
+                                             </div>
+                                             <div className="flex justify-between items-center text-blue-600 text-[9px]">
+                                                <span>头程</span>
+                                                <span className="flex items-center gap-1">
+                                                  <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                                                </span>
+                                                <div className="flex items-center gap-1">
+                                                  <input
+                                                    type="number"
+                                                    value={po.leg1Days}
+                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
+                                                    className="w-12 text-right bg-transparent border-b border-blue-100 text-xs"
+                                                  />天
+                                                </div>
+                                             </div>
+                                             <div className="flex justify-between items-center text-orange-600 text-[9px]">
+                                                <span>二程</span>
+                                                <span className="flex items-center gap-1">
+                                                  <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                                                </span>
+                                                <div className="flex items-center gap-1">
+                                                  <input
+                                                    type="number"
+                                                    value={po.leg2Days}
+                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
+                                                    className="w-12 text-right bg-transparent border-b border-orange-100 text-xs"
+                                                  />天
+                                                </div>
+                                             </div>
+                                             <div className="flex justify-between items-center text-emerald-600 text-[9px]">
+                                                <span>三程</span>
+                                                <span className="flex items-center gap-1">
+                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                                                </span>
+                                                <div className="flex items-center gap-1">
+                                                  <input
+                                                    type="number"
+                                                    value={po.leg3Days}
+                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg3Days', clampNonNegativeInt(e.target.value, '三程时效'))}
+                                                    className="w-12 text-right bg-transparent border-b border-emerald-100 text-xs"
+                                                  />天
+                                                </div>
+                                             </div>
+                                          </div>
+                                          <div className="mt-2 flex items-center justify-between text-[9px]">
+                                            <div className="font-black text-slate-500 italic">
+                                              预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)+Number(po.leg3Days)) * 86400000).toLocaleDateString()}
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                onClick={() => duplicatePO(activeSku.id, po.id)}
+                                                className="p-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                                                title="复制"
+                                              >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                              </button>
+                                              <button
+                                                onClick={() => removePO(activeSku.id, po.id)}
+                                                className="p-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                                                title="删除"
+                                              >
+                                                <Trash2 size={12}/>
+                                              </button>
+                                            </div>
+                                          </div>
+                                          </>
                                         )}
                                      </div>
                                      );
