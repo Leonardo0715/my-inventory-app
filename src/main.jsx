@@ -426,7 +426,7 @@ const App = () => {
   const [offlineTxTrackingNo, setOfflineTxTrackingNo] = useState('');
   const [offlineSelectedItemId, setOfflineSelectedItemId] = useState(null);
   const [offlineOverviewQuery, setOfflineOverviewQuery] = useState('');
-  const [outLogFilters, setOutLogFilters] = useState({ sku: '', purpose: '', account: '', customer: '', trackingNo: '' });
+  const [outLogFilters, setOutLogFilters] = useState({ sku: '', purpose: '', account: '', customer: '', trackingNo: '', dateFrom: '', dateTo: '' });
   const [outLogFilterOpen, setOutLogFilterOpen] = useState('');
   const [deleteApprovals, setDeleteApprovals] = useState([]);
   const [userRoles, setUserRoles] = useState({});
@@ -2135,6 +2135,14 @@ const App = () => {
 
   const filteredOutboundSummaryLogs = useMemo(() => {
     return offlineOutboundSummaryLogs.filter(log => {
+      if (outLogFilters.dateFrom) {
+        const logDate = (log.happenedAt || '').slice(0, 10);
+        if (logDate < outLogFilters.dateFrom) return false;
+      }
+      if (outLogFilters.dateTo) {
+        const logDate = (log.happenedAt || '').slice(0, 10);
+        if (logDate > outLogFilters.dateTo) return false;
+      }
       if (outLogFilters.sku && log.itemName !== outLogFilters.sku) return false;
       if (outLogFilters.purpose && log.purpose !== outLogFilters.purpose) return false;
       if (outLogFilters.account && log.account !== outLogFilters.account) return false;
@@ -4547,14 +4555,57 @@ const App = () => {
                     <div className="px-4 py-2 border-b bg-slate-50/80 text-xs font-black text-slate-600 flex items-center justify-between">
                       <span>全局出库汇总记录{Object.values(outLogFilters).some(Boolean) ? ` (筛选中: ${filteredOutboundSummaryLogs.length}/${offlineOutboundSummaryLogs.length})` : ''}</span>
                       {Object.values(outLogFilters).some(Boolean) && (
-                        <button onClick={() => setOutLogFilters({ sku: '', purpose: '', account: '', customer: '', trackingNo: '' })} className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold">清除筛选</button>
+                        <button onClick={() => setOutLogFilters({ sku: '', purpose: '', account: '', customer: '', trackingNo: '', dateFrom: '', dateTo: '' })} className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold">清除筛选</button>
                       )}
                     </div>
                     <div className="flex-1 overflow-auto">
                       <table className="w-full text-left text-xs">
                         <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase z-10">
                           <tr>
-                            <th className="px-4 py-3">时间</th>
+                            <th className="px-4 py-3 relative">
+                              <div className="flex items-center gap-1">
+                                <span>时间</span>
+                                <button onClick={() => setOutLogFilterOpen(prev => prev === 'date' ? '' : 'date')} className={`w-4 h-4 flex items-center justify-center rounded ${(outLogFilters.dateFrom || outLogFilters.dateTo) ? 'bg-indigo-600 text-white' : 'hover:bg-slate-200 text-slate-400'}`}>
+                                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M0 0h10L6 5v4l-2 1V5z"/></svg>
+                                </button>
+                              </div>
+                              {outLogFilterOpen === 'date' && (
+                                <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-3 z-50 min-w-[230px] normal-case" onClick={e => e.stopPropagation()}>
+                                  <div className="text-[10px] font-bold text-slate-500 mb-2 uppercase">快捷选择</div>
+                                  <div className="grid grid-cols-3 gap-1 mb-3">
+                                    {[
+                                      { label: '今天', fn: () => { const d = new Date().toISOString().slice(0,10); return { dateFrom: d, dateTo: d }; } },
+                                      { label: '近7天', fn: () => { const t = new Date(); const f = new Date(t); f.setDate(f.getDate()-6); return { dateFrom: f.toISOString().slice(0,10), dateTo: t.toISOString().slice(0,10) }; } },
+                                      { label: '近30天', fn: () => { const t = new Date(); const f = new Date(t); f.setDate(f.getDate()-29); return { dateFrom: f.toISOString().slice(0,10), dateTo: t.toISOString().slice(0,10) }; } },
+                                      { label: '本月', fn: () => { const t = new Date(); const f = new Date(t.getFullYear(), t.getMonth(), 1); const l = new Date(t.getFullYear(), t.getMonth()+1, 0); return { dateFrom: f.toISOString().slice(0,10), dateTo: l.toISOString().slice(0,10) }; } },
+                                      { label: '上月', fn: () => { const t = new Date(); const f = new Date(t.getFullYear(), t.getMonth()-1, 1); const l = new Date(t.getFullYear(), t.getMonth(), 0); return { dateFrom: f.toISOString().slice(0,10), dateTo: l.toISOString().slice(0,10) }; } },
+                                      { label: '全部', fn: () => ({ dateFrom: '', dateTo: '' }) },
+                                    ].map(preset => (
+                                      <button key={preset.label} onClick={() => { const r = preset.fn(); setOutLogFilters(f => ({ ...f, ...r })); if (!r.dateFrom && !r.dateTo) setOutLogFilterOpen(''); }} className={`px-2 py-1.5 rounded text-[10px] font-bold border ${
+                                        (() => { const r = preset.fn(); return outLogFilters.dateFrom === r.dateFrom && outLogFilters.dateTo === r.dateTo; })()
+                                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                      }`}>{preset.label}</button>
+                                    ))}
+                                  </div>
+                                  <div className="text-[10px] font-bold text-slate-500 mb-1.5 uppercase">自定义范围</div>
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] text-slate-500 w-6">从</span>
+                                      <input type="date" value={outLogFilters.dateFrom} onChange={e => setOutLogFilters(f => ({ ...f, dateFrom: e.target.value }))} className="flex-1 px-2 py-1 border border-slate-200 rounded text-xs font-mono" />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] text-slate-500 w-6">至</span>
+                                      <input type="date" value={outLogFilters.dateTo} onChange={e => setOutLogFilters(f => ({ ...f, dateTo: e.target.value }))} className="flex-1 px-2 py-1 border border-slate-200 rounded text-xs font-mono" />
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2 mt-3">
+                                    <button onClick={() => { setOutLogFilters(f => ({ ...f, dateFrom: '', dateTo: '' })); setOutLogFilterOpen(''); }} className="flex-1 px-2 py-1.5 rounded text-[10px] font-bold border border-slate-200 text-slate-600 hover:bg-slate-50">清除</button>
+                                    <button onClick={() => setOutLogFilterOpen('')} className="flex-1 px-2 py-1.5 rounded text-[10px] font-bold bg-indigo-600 text-white hover:bg-indigo-700">确定</button>
+                                  </div>
+                                </div>
+                              )}
+                            </th>
                             <th className="px-4 py-3 relative">
                               <div className="flex items-center gap-1">
                                 <span>SKU</span>
