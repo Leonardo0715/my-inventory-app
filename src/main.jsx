@@ -138,9 +138,9 @@ function getPoTransitDays(po) {
   return getPoLegs(po).reduce((sum, leg) => sum + Number(leg.days || 0), 0);
 }
 
-/** 计算 PO 总提前期（生产 + 全部运输段） */
+/** 计算 PO 总提前期（生产 + 全部运输段 + 查验天数） */
 function getPoTotalLT(po) {
-  return Number(po.prodDays || 0) + getPoTransitDays(po);
+  return Number(po.prodDays || 0) + getPoTransitDays(po) + Number(po.inspectionDays || 0);
 }
 
 /** 标准化 legs 数组（用于 sanitizer / import） */
@@ -369,6 +369,7 @@ function sanitizeSkus(items) {
         qty: Number(po.qty ?? 0),
         prodDays: Number(po.prodDays ?? 0),
         legs: sanitizeLegs(po),
+        inspectionDays: Math.max(0, Number(po.inspectionDays ?? 0)),
         status: validStatuses.includes(po.status) ? po.status : 'ordered',
       }));
       return { id, name, currentStock, unitCost, monthlySales, salesByYear, pos };
@@ -2494,7 +2495,7 @@ const App = () => {
       if (s.id === skuId) {
         const poNumber = generatePONumber(skuId);
         const daysForMode = (mode) => defaultSettings[mode + 'Days'] || 30;
-        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: defaultSettings.qty || 1000, prodDays: defaultSettings.prodDays || 30, legs: [{ mode: 'sea', days: daysForMode('sea') }, { mode: 'sea', days: daysForMode('sea') }], status: 'ordered' };
+        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: defaultSettings.qty || 1000, prodDays: defaultSettings.prodDays || 30, legs: [{ mode: 'sea', days: daysForMode('sea') }, { mode: 'sea', days: daysForMode('sea') }], inspectionDays: 0, status: 'ordered' };
         return { ...s, pos: [...(s.pos || []), newPO] };
       }
       return s;
@@ -2584,7 +2585,7 @@ const App = () => {
       setWarning('当前商品没有采购单数据可导出');
       return;
     }
-    const headers = ['PO编号', '下单日期', '采购数量', '生产周期(天)', '运输段明细', '状态', '预计到货日'];
+    const headers = ['PO编号', '下单日期', '采购数量', '生产周期(天)', '运输段明细', '查验天数', '状态', '预计到货日'];
     const modeLabel = (m) => m === 'sea' ? '海运' : m === 'air' ? '空运' : '铁路';
     const statusLabelMap = { pre_order: '预下订单', ordered: '已下单', cancelled: '已取消', in_production: '生产中', prod_complete: '生产完成', leg1_shipped: '头程已发', leg1_arrived: '头程到达', leg2_shipped: '二程已发', leg2_arrived: '二程到达', inspecting: '验货中', picking: '装柜中', bonded_warehouse: '保税仓', pending_shelving: '待上架', shelved: '已上架' };
     const rows = activeSku.pos.map(po => {
@@ -2597,6 +2598,7 @@ const App = () => {
         po.qty,
         po.prodDays,
         legsStr,
+        po.inspectionDays || 0,
         statusLabelMap[po.status] || po.status || '已下单',
         arrivalDate.toISOString().split('T')[0],
       ];
@@ -2635,6 +2637,7 @@ const App = () => {
             qty: clampNonNegativeInt(po.qty ?? 0, '采购数量'),
             prodDays: clampNonNegativeInt(po.prodDays ?? 0, '生产周期'),
             legs: sanitizeLegs(po),
+            inspectionDays: Math.max(0, Number(po.inspectionDays ?? 0)),
             status: validStatuses.includes(po.status) ? po.status : 'ordered',
           }));
           setSkus(prev => prev.map(s => s.id === activeSku.id ? { ...s, pos: [...(s.pos || []), ...sanitized] } : s));
@@ -2669,7 +2672,7 @@ const App = () => {
           const modeMap = { '海运': 'sea', '空运': 'air', '铁路': 'rail' };
           for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',').map(c => c.trim());
-            if (cols.length < 6) continue;
+            if (cols.length < 7) continue;
             // 解析运输段明细字段（格式： "头程:海运35天 / 二程:铁路15天"）
             const legs = [];
             const legsRaw = (cols[4] || '').split('/').map(s => s.trim()).filter(Boolean);
@@ -2689,7 +2692,8 @@ const App = () => {
               qty: clampNonNegativeInt(cols[2] ?? 0, '采购数量'),
               prodDays: clampNonNegativeInt(cols[3] ?? 0, '生产周期'),
               legs,
-              status: statusMap[cols[5]] || 'ordered',
+              inspectionDays: Math.max(0, Number(cols[5] ?? 0)),
+              status: statusMap[cols[6]] || 'ordered',
             });
           }
           if (imported.length === 0) {
@@ -3913,6 +3917,19 @@ const App = () => {
                                              >
                                                + 添加运输段
                                              </button>
+                                             {po.status === 'inspecting' && (
+                                               <div className="flex justify-between items-center text-yellow-700 text-[9px] mt-1.5 pt-1.5 border-t border-dashed border-yellow-200">
+                                                 <span>🔍 预估查验天数</span>
+                                                 <div className="flex items-center gap-1">
+                                                   <input
+                                                     type="number"
+                                                     value={po.inspectionDays || 0}
+                                                     onChange={e => updatePO(activeSku.id, po.id, 'inspectionDays', clampNonNegativeInt(e.target.value, '查验天数'))}
+                                                     className="w-12 text-right bg-transparent border-b border-yellow-200 text-xs"
+                                                   />天
+                                                 </div>
+                                               </div>
+                                             )}
                                           </div>
                                           <div className="mt-2 flex items-center justify-between text-[9px]">
                                             <div className="font-black text-indigo-500 italic">
@@ -4117,6 +4134,19 @@ const App = () => {
                                              >
                                                + 添加运输段
                                              </button>
+                                             {po.status === 'inspecting' && (
+                                               <div className="flex justify-between items-center text-yellow-700 text-[9px] mt-1.5 pt-1.5 border-t border-dashed border-yellow-200">
+                                                 <span>🔍 预估查验天数</span>
+                                                 <div className="flex items-center gap-1">
+                                                   <input
+                                                     type="number"
+                                                     value={po.inspectionDays || 0}
+                                                     onChange={e => updatePO(activeSku.id, po.id, 'inspectionDays', clampNonNegativeInt(e.target.value, '查验天数'))}
+                                                     className="w-12 text-right bg-transparent border-b border-yellow-200 text-xs"
+                                                   />天
+                                                 </div>
+                                               </div>
+                                             )}
                                           </div>
                                           <div className="mt-2 flex items-center justify-between text-[9px]">
                                             <div className="font-black text-slate-500 italic">
