@@ -2664,13 +2664,17 @@ const App = () => {
       
       let incomingQty = 0;
       sku.pos?.forEach(po => {
-        // 排除已取消的采购单（预下订单参与推演）
-        if (po.status === 'cancelled') return;
+        // 排除已取消和已上架的采购单（已上架的库存已计入currentStock）
+        if (po.status === 'cancelled' || po.status === 'shelved') return;
         const arrival = new Date(po.orderDate);
         if (isNaN(arrival.getTime())) return; // 无效日期跳过
         const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
         arrival.setDate(arrival.getDate() + totalLT);
-        if (arrival.toISOString().split('T')[0] === dateStr) incomingQty += Number(po.qty || 0);
+        const arrivalStr = arrival.toISOString().split('T')[0];
+        // 到货日匹配当天，或者到货日已过期(在今天之前)则在第0天(今天)计入
+        if (arrivalStr === dateStr || (i === 0 && arrivalStr < dateStr)) {
+          incomingQty += Number(po.qty || 0);
+        }
       });
 
       // 物理约束：库存不允许向下“透支”，先扣减再与 0 取最大值，再叠加到货量
@@ -2772,11 +2776,12 @@ const App = () => {
     }
     
     // 订单决策计算 - 基于最终断货日期（考虑补货恢复）
+    // 存储 ISO 日期字符串，仅在渲染时格式化显示
     if (targetDayIndex < 400) {
       const finalStockOutData = f.data[targetDayIndex];
       if (finalStockOutData) {
-        finalStockOutDate = new Date(finalStockOutData.date).toLocaleDateString();
-        orderDateStr = new Date(finalStockOutData.date).toLocaleDateString();
+        finalStockOutDate = finalStockOutData.date;
+        orderDateStr = finalStockOutData.date;
       }
     }
 
@@ -3027,7 +3032,11 @@ const App = () => {
       });
     });
 
-    const salesTotals = salesSummary.totals.map(v => Number(v) || 0);
+    // 将绝对月份索引(0=一月)的销量映射为相对月份偏移(0=当月)
+    const salesTotals = Array.from({ length: 12 }, (_, i) => {
+      const targetMonth = (currentMonth + i) % 12;
+      return Number(salesSummary.totals[targetMonth]) || 0;
+    });
     const startStocks = Array(12).fill(0);
     let rollingStock = stockSummary.onHandStock;
     for (let i = 0; i < 12; i++) {
@@ -3714,14 +3723,23 @@ const App = () => {
                                  <div className="space-y-2">
                                    {activeSku?.pos?.filter(po => po.status !== 'shelved' && po.status !== 'pre_order' && po.status !== 'cancelled').map(po => {
                                      const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays) * 86400000);
-                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000).toLocaleDateString();
+                                     const arrivalDateObj = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000);
+                                     const arrivalDate = arrivalDateObj.toLocaleDateString();
                                      const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
                                      const isProductionWarning = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
+                                     const daysOverdue = Math.floor((new Date() - arrivalDateObj) / 86400000);
+                                     const isOverdue = daysOverdue > 0 && po.status !== 'shelved';
                                      const isExpanded = expandedPoId === po.id;
                                      
                                      return (
-                                     <div key={po.id} className={`rounded-xl relative group border transition-all ${isProductionWarning ? 'bg-red-50 border-red-300 shadow-md shadow-red-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'} p-3`}>
-                                        {isProductionWarning && (
+                                     <div key={po.id} className={`rounded-xl relative group border transition-all ${isOverdue ? 'bg-orange-50 border-orange-400 shadow-md shadow-orange-200' : isProductionWarning ? 'bg-red-50 border-red-300 shadow-md shadow-red-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'} p-3`}>
+                                        {isOverdue && (
+                                          <div className="mb-2 bg-orange-100 border border-orange-400 rounded-lg px-3 py-1.5 flex items-center gap-2">
+                                            <AlertTriangle size={12} className="text-orange-600 flex-shrink-0" />
+                                            <span className="text-[10px] font-black text-orange-700">🚨 到货超期 {daysOverdue} 天！预计到货 {arrivalDate}，请跟进物流状态</span>
+                                          </div>
+                                        )}
+                                        {!isOverdue && isProductionWarning && (
                                           <div className="mb-2 bg-red-100 border border-red-300 rounded-lg px-3 py-1.5 flex items-center gap-2">
                                             <AlertTriangle size={12} className="text-red-600 flex-shrink-0" />
                                             <span className="text-[10px] font-black text-red-700">⚠️ 交期预警：{Math.ceil(daysUntilProdEnd)} 天</span>
@@ -5528,14 +5546,19 @@ const App = () => {
                   const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays || 0) * 86400000);
                   const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
                   const needsFollowUp = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
+                  const arrivalDateStr = arrivalDate.toISOString().split('T')[0];
+                  const daysOverdue = Math.floor((new Date() - arrivalDate) / 86400000);
+                  const isOverdue = daysOverdue > 0 && po.status !== 'shelved' && po.status !== 'cancelled';
                   
                   allPos.push({
                     ...po,
                     skuId: sku.id,
                     skuName: sku.name,
-                    arrivalDate: arrivalDate.toISOString().split('T')[0],
-                    needsFollowUp,
-                    followUpDays: Math.ceil(daysUntilProdEnd)
+                    arrivalDate: arrivalDateStr,
+                    needsFollowUp: needsFollowUp || isOverdue,
+                    followUpDays: Math.ceil(daysUntilProdEnd),
+                    isOverdue,
+                    daysOverdue
                   });
                 });
               });
@@ -5625,7 +5648,12 @@ const App = () => {
                                         </div>
                                     </td>
                                     <td className="py-3.5 px-4">
-                                        {po.needsFollowUp ? (
+                                        {po.isOverdue ? (
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold ${dashboardTheme === 'dark' ? 'bg-orange-900/20 border-orange-800 text-orange-400' : 'bg-orange-50 border-orange-200 text-orange-700'}`}>
+                                                <AlertTriangle size={12} className="flex-shrink-0 animate-pulse"/>
+                                                <span>🚨 到货超期 {po.daysOverdue} 天</span>
+                                            </div>
+                                        ) : po.needsFollowUp ? (
                                             <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold ${dashboardTheme === 'dark' ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-100 text-red-600'}`}>
                                                 <AlertTriangle size={12} className="flex-shrink-0"/>
                                                 <span>距完工还剩 {po.followUpDays} 天</span>
@@ -5682,7 +5710,7 @@ const App = () => {
                         </div>
                         <div className="text-right">
                           <div className={`text-[11px] font-bold ${row.stockoutDate !== '安全' ? (dashboardTheme === 'dark' ? 'text-amber-300' : 'text-amber-700') : (dashboardTheme === 'dark' ? 'text-emerald-300' : 'text-emerald-700')}`}>
-                            {row.stockoutDate}
+                            {row.stockoutDate !== '安全' ? new Date(row.stockoutDate).toLocaleDateString() : row.stockoutDate}
                           </div>
                         </div>
                       </div>
@@ -5738,7 +5766,7 @@ const App = () => {
                           <td className="py-4 text-center">
                               {sku.finalStockOutDate !== '安全' ? (
                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold ${dashboardTheme === 'dark' ? 'bg-red-900/30 text-red-400' : 'bg-red-100 text-red-800'} animate-pulse`}>
-                                  {sku.finalStockOutDate}
+                                  {new Date(sku.finalStockOutDate).toLocaleDateString()}
                                 </span>
                               ) : (
                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-sm font-bold ${dashboardTheme === 'dark' ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-100 text-emerald-800'}`}>
@@ -5751,7 +5779,7 @@ const App = () => {
                           <td className={`py-4 px-4 text-center border-x ${dashboardTheme === 'dark' ? 'bg-indigo-900/5 border-indigo-900/10' : 'bg-indigo-50/30 border-indigo-50'}`}>
                             {sku.finalStockOutDate !== '安全' ? (
                               <div className="flex flex-col items-center gap-1">
-                                <span className={`text-xs uppercase font-bold ${dashboardTheme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>截止: {sku.orderDateStr}</span>
+                                <span className={`text-xs uppercase font-bold ${dashboardTheme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>截止: {new Date(sku.orderDateStr).toLocaleDateString()}</span>
                                 <span className={`font-mono font-bold text-lg ${sku.urgency === 'critical' ? 'text-red-500' : (dashboardTheme === 'dark' ? 'text-slate-200' : 'text-slate-800')}`}>
                                   {sku.suggestQty.toFixed(0)}
                                 </span>
