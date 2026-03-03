@@ -112,11 +112,53 @@ try {
 }
 
 const DEFAULT_DATA = [
-  { id: 1, name: '旗舰商品 A (北美线)', currentStock: 1200, unitCost: 0, monthlySales: Array(12).fill(600), pos: [{ id: 101, poNumber: 'PO-20260214-001', orderDate: new Date().toISOString().split('T')[0], qty: 2500, prodDays: 30, leg1Mode: 'sea', leg1Days: 35, leg2Mode: 'rail', leg2Days: 15, leg3Mode: 'sea', leg3Days: 10 }] },
+  { id: 1, name: '旗舰商品 A (北美线)', currentStock: 1200, unitCost: 0, monthlySales: Array(12).fill(600), pos: [{ id: 101, poNumber: 'PO-20260214-001', orderDate: new Date().toISOString().split('T')[0], qty: 2500, prodDays: 30, legs: [{ mode: 'sea', days: 35 }, { mode: 'rail', days: 15 }] }] },
   { id: 2, name: '高周转新品 B (东南亚)', currentStock: 4000, unitCost: 0, monthlySales: Array(12).fill(800), pos: [] }
 ];
 
 const MONTH_LABELS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+// PO 运输段动态管理工具
+const LEG_LABELS = ['头程', '二程', '三程', '四程', '五程', '六程', '七程', '八程'];
+const LEG_TEXT_COLORS = ['text-blue-600', 'text-orange-600', 'text-emerald-600', 'text-purple-600', 'text-pink-600', 'text-cyan-600', 'text-teal-600', 'text-rose-600'];
+const LEG_BORDER_COLORS = ['border-blue-100', 'border-orange-100', 'border-emerald-100', 'border-purple-100', 'border-pink-100', 'border-cyan-100', 'border-teal-100', 'border-rose-100'];
+
+/** 获取 PO 的运输段数组（兼容旧 leg1/leg2/leg3 格式） */
+function getPoLegs(po) {
+  if (Array.isArray(po.legs) && po.legs.length > 0) return po.legs;
+  const legs = [];
+  if (Number(po.leg1Days) > 0 || po.leg1Mode) legs.push({ mode: po.leg1Mode || 'sea', days: Number(po.leg1Days || 0) });
+  if (Number(po.leg2Days) > 0 || po.leg2Mode) legs.push({ mode: po.leg2Mode || 'sea', days: Number(po.leg2Days || 0) });
+  if (Number(po.leg3Days) > 0 || po.leg3Mode) legs.push({ mode: po.leg3Mode || 'sea', days: Number(po.leg3Days || 0) });
+  return legs.length > 0 ? legs : [{ mode: 'sea', days: 30 }];
+}
+
+/** 计算 PO 全部运输段天数之和 */
+function getPoTransitDays(po) {
+  return getPoLegs(po).reduce((sum, leg) => sum + Number(leg.days || 0), 0);
+}
+
+/** 计算 PO 总提前期（生产 + 全部运输段） */
+function getPoTotalLT(po) {
+  return Number(po.prodDays || 0) + getPoTransitDays(po);
+}
+
+/** 标准化 legs 数组（用于 sanitizer / import） */
+function sanitizeLegs(po) {
+  if (Array.isArray(po.legs) && po.legs.length > 0) {
+    return po.legs.filter(Boolean).map(leg => ({
+      mode: ['sea', 'air', 'rail'].includes(leg.mode) ? leg.mode : 'sea',
+      days: Math.max(0, Number(leg.days ?? 0)),
+    }));
+  }
+  // 从旧 leg1/leg2/leg3 格式迁移
+  const legs = [];
+  const validModes = ['sea', 'air', 'rail'];
+  if (Number(po.leg1Days) > 0 || po.leg1Mode) legs.push({ mode: validModes.includes(po.leg1Mode) ? po.leg1Mode : 'sea', days: Math.max(0, Number(po.leg1Days ?? 0)) });
+  if (Number(po.leg2Days) > 0 || po.leg2Mode) legs.push({ mode: validModes.includes(po.leg2Mode) ? po.leg2Mode : 'sea', days: Math.max(0, Number(po.leg2Days ?? 0)) });
+  if (Number(po.leg3Days) > 0 || po.leg3Mode) legs.push({ mode: validModes.includes(po.leg3Mode) ? po.leg3Mode : 'sea', days: Math.max(0, Number(po.leg3Days ?? 0)) });
+  return legs.length > 0 ? legs : [{ mode: 'sea', days: 30 }];
+}
 
 function createEmptyYearSales(defaultForecast = 0) {
   return Array.from({ length: 12 }).map(() => ({ actual: null, forecast: defaultForecast }));
@@ -319,19 +361,15 @@ function sanitizeSkus(items) {
       }
 
       const posRaw = Array.isArray(sku.pos) ? sku.pos : [];
+      const validStatuses = ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'];
       const pos = posRaw.filter(Boolean).map((po) => ({
         id: Number.isFinite(Number(po.id)) ? Number(po.id) : Date.now(),
         poNumber: String(po.poNumber ?? ''),
         orderDate: String(po.orderDate ?? new Date().toISOString().split('T')[0]).slice(0, 10),
         qty: Number(po.qty ?? 0),
         prodDays: Number(po.prodDays ?? 0),
-        leg1Mode: ['sea', 'air', 'rail'].includes(po.leg1Mode) ? po.leg1Mode : 'sea',
-        leg1Days: Number(po.leg1Days ?? 0),
-        leg2Mode: ['sea', 'air', 'rail'].includes(po.leg2Mode) ? po.leg2Mode : 'sea',
-        leg2Days: Number(po.leg2Days ?? 0),
-        leg3Mode: ['sea', 'air', 'rail'].includes(po.leg3Mode) ? po.leg3Mode : 'sea',
-        leg3Days: Number(po.leg3Days ?? 0),
-        status: ['pre_order', 'ordered', 'cancelled', 'in_production', 'prod_complete', 'leg1_shipped', 'leg1_arrived', 'leg2_shipped', 'leg2_arrived', 'inspecting', 'picking', 'bonded_warehouse', 'pending_shelving', 'shelved'].includes(po.status) ? po.status : 'ordered',
+        legs: sanitizeLegs(po),
+        status: validStatuses.includes(po.status) ? po.status : 'ordered',
       }));
       return { id, name, currentStock, unitCost, monthlySales, salesByYear, pos };
     });
@@ -2456,7 +2494,7 @@ const App = () => {
       if (s.id === skuId) {
         const poNumber = generatePONumber(skuId);
         const daysForMode = (mode) => defaultSettings[mode + 'Days'] || 30;
-        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: defaultSettings.qty || 1000, prodDays: defaultSettings.prodDays || 30, leg1Mode: 'sea', leg1Days: daysForMode('sea'), leg2Mode: 'sea', leg2Days: daysForMode('sea'), leg3Mode: 'sea', leg3Days: daysForMode('sea'), status: 'ordered' };
+        const newPO = { id: Date.now(), poNumber, orderDate: new Date().toISOString().split('T')[0], qty: defaultSettings.qty || 1000, prodDays: defaultSettings.prodDays || 30, legs: [{ mode: 'sea', days: daysForMode('sea') }, { mode: 'sea', days: daysForMode('sea') }], status: 'ordered' };
         return { ...s, pos: [...(s.pos || []), newPO] };
       }
       return s;
@@ -2466,13 +2504,39 @@ const App = () => {
     if (!ensureEditPermission()) return;
     setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => {
       if (p.id !== poId) return p;
-      const updated = { ...p, [field]: value };
+      return { ...p, [field]: value };
+    }) } : s));
+  };
+  // 运输段动态管理
+  const updatePOLeg = (skuId, poId, legIndex, legField, value) => {
+    if (!ensureEditPermission()) return;
+    setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => {
+      if (p.id !== poId) return p;
+      const legs = [...(p.legs || [])];
+      if (!legs[legIndex]) return p;
+      legs[legIndex] = { ...legs[legIndex], [legField]: value };
       // 切换运输方式时自动填入对应默认天数
-      if (field === 'leg1Mode' || field === 'leg2Mode' || field === 'leg3Mode') {
-        const daysField = field.replace('Mode', 'Days');
-        updated[daysField] = defaultSettings[value + 'Days'] || 30;
+      if (legField === 'mode') {
+        legs[legIndex].days = defaultSettings[value + 'Days'] || 30;
       }
-      return updated;
+      return { ...p, legs };
+    }) } : s));
+  };
+  const addPOLeg = (skuId, poId) => {
+    if (!ensureEditPermission()) return;
+    setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => {
+      if (p.id !== poId) return p;
+      return { ...p, legs: [...(p.legs || []), { mode: 'sea', days: defaultSettings.seaDays || 30 }] };
+    }) } : s));
+  };
+  const removePOLeg = (skuId, poId, legIndex) => {
+    if (!ensureEditPermission()) return;
+    setSkus(prev => prev.map(s => s.id === skuId ? { ...s, pos: (s.pos || []).map(p => {
+      if (p.id !== poId) return p;
+      const legs = [...(p.legs || [])];
+      if (legs.length <= 1) return p; // 至少保留一段
+      legs.splice(legIndex, 1);
+      return { ...p, legs };
     }) } : s));
   };
   const removePO = (skuId, poId) => {
@@ -2520,22 +2584,19 @@ const App = () => {
       setWarning('当前商品没有采购单数据可导出');
       return;
     }
-    const headers = ['PO编号', '下单日期', '采购数量', '生产周期(天)', '头程方式', '头程时效(天)', '二程方式', '二程时效(天)', '三程方式', '三程时效(天)', '状态', '预计到货日'];
+    const headers = ['PO编号', '下单日期', '采购数量', '生产周期(天)', '运输段明细', '状态', '预计到货日'];
     const modeLabel = (m) => m === 'sea' ? '海运' : m === 'air' ? '空运' : '铁路';
     const statusLabelMap = { pre_order: '预下订单', ordered: '已下单', cancelled: '已取消', in_production: '生产中', prod_complete: '生产完成', leg1_shipped: '头程已发', leg1_arrived: '头程到达', leg2_shipped: '二程已发', leg2_arrived: '二程到达', inspecting: '验货中', picking: '装柜中', bonded_warehouse: '保税仓', pending_shelving: '待上架', shelved: '已上架' };
     const rows = activeSku.pos.map(po => {
-      const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days || 0)) * 86400000);
+      const legs = getPoLegs(po);
+      const legsStr = legs.map((leg, i) => `${LEG_LABELS[i] || (i+1)+'程'}:${modeLabel(leg.mode)}${leg.days}天`).join(' / ');
+      const arrivalDate = new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000);
       return [
         po.poNumber || '',
         po.orderDate,
         po.qty,
         po.prodDays,
-        modeLabel(po.leg1Mode),
-        po.leg1Days,
-        modeLabel(po.leg2Mode),
-        po.leg2Days,
-        modeLabel(po.leg3Mode),
-        po.leg3Days || 0,
+        legsStr,
         statusLabelMap[po.status] || po.status || '已下单',
         arrivalDate.toISOString().split('T')[0],
       ];
@@ -2573,12 +2634,7 @@ const App = () => {
             orderDate: String(po.orderDate ?? new Date().toISOString().split('T')[0]).slice(0, 10),
             qty: clampNonNegativeInt(po.qty ?? 0, '采购数量'),
             prodDays: clampNonNegativeInt(po.prodDays ?? 0, '生产周期'),
-            leg1Mode: ['sea', 'air', 'rail'].includes(po.leg1Mode) ? po.leg1Mode : 'sea',
-            leg1Days: clampNonNegativeInt(po.leg1Days ?? 0, '头程时效'),
-            leg2Mode: ['sea', 'air', 'rail'].includes(po.leg2Mode) ? po.leg2Mode : 'sea',
-            leg2Days: clampNonNegativeInt(po.leg2Days ?? 0, '二程时效'),
-            leg3Mode: ['sea', 'air', 'rail'].includes(po.leg3Mode) ? po.leg3Mode : 'sea',
-            leg3Days: clampNonNegativeInt(po.leg3Days ?? 0, '三程时效'),
+            legs: sanitizeLegs(po),
             status: validStatuses.includes(po.status) ? po.status : 'ordered',
           }));
           setSkus(prev => prev.map(s => s.id === activeSku.id ? { ...s, pos: [...(s.pos || []), ...sanitized] } : s));
@@ -2610,23 +2666,30 @@ const App = () => {
           }
           const imported = [];
           const statusMap = { '预下订单': 'pre_order', '已下单': 'ordered', '已取消': 'cancelled', '生产中': 'in_production', '生产完成': 'prod_complete', '头程已发': 'leg1_shipped', '头程到达': 'leg1_arrived', '二程已发': 'leg2_shipped', '二程到达': 'leg2_arrived', '验货中': 'inspecting', '装柜中': 'picking', '保税仓': 'bonded_warehouse', '待上架': 'pending_shelving', '已上架': 'shelved' };
+          const modeMap = { '海运': 'sea', '空运': 'air', '铁路': 'rail' };
           for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',').map(c => c.trim());
-            if (cols.length < 10) continue;
-            const modeMap = { '海运': 'sea', '空运': 'air', '铁路': 'rail' };
+            if (cols.length < 6) continue;
+            // 解析运输段明细字段（格式： "头程:海运35天 / 二程:铁路15天"）
+            const legs = [];
+            const legsRaw = (cols[4] || '').split('/').map(s => s.trim()).filter(Boolean);
+            legsRaw.forEach(part => {
+              const match = part.match(/[：:]?(\S+?)(\d+)\u5929?$/);
+              if (match) {
+                const modeStr = match[1];
+                const days = Number(match[2]) || 0;
+                legs.push({ mode: modeMap[modeStr] || 'sea', days });
+              }
+            });
+            if (legs.length === 0) legs.push({ mode: 'sea', days: 30 });
             imported.push({
               id: Date.now() + i,
               poNumber: cols[0] || '',
               orderDate: cols[1] || new Date().toISOString().split('T')[0],
               qty: clampNonNegativeInt(cols[2] ?? 0, '采购数量'),
               prodDays: clampNonNegativeInt(cols[3] ?? 0, '生产周期'),
-              leg1Mode: modeMap[cols[4]] || 'sea',
-              leg1Days: clampNonNegativeInt(cols[5] ?? 0, '头程时效'),
-              leg2Mode: modeMap[cols[6]] || 'sea',
-              leg2Days: clampNonNegativeInt(cols[7] ?? 0, '二程时效'),
-              leg3Mode: modeMap[cols[8]] || 'sea',
-              leg3Days: clampNonNegativeInt(cols[9] ?? 0, '三程时效'),
-              status: statusMap[cols[10]] || 'ordered',
+              legs,
+              status: statusMap[cols[5]] || 'ordered',
             });
           }
           if (imported.length === 0) {
@@ -2668,8 +2731,7 @@ const App = () => {
         if (po.status === 'cancelled' || po.status === 'shelved') return;
         const arrival = new Date(po.orderDate);
         if (isNaN(arrival.getTime())) return; // 无效日期跳过
-        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
-        arrival.setDate(arrival.getDate() + totalLT);
+        arrival.setDate(arrival.getDate() + getPoTotalLT(po));
         const arrivalStr = arrival.toISOString().split('T')[0];
         // 到货日匹配当天，或者到货日已过期(在今天之前)则在第0天(今天)计入
         if (arrivalStr === dateStr || (i === 0 && arrivalStr < dateStr)) {
@@ -2717,8 +2779,7 @@ const App = () => {
       
       activePOs.forEach(po => {
         const arrival = new Date(po.orderDate);
-        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
-        arrival.setDate(arrival.getDate() + totalLT);
+        arrival.setDate(arrival.getDate() + getPoTotalLT(po));
         const arrivalStr = arrival.toISOString().split('T')[0];
         
         const idx = f.data.findIndex(d => d.date === arrivalStr);
@@ -2812,8 +2873,7 @@ const App = () => {
         if (po.status === 'cancelled') return;
         const arrival = new Date(po.orderDate);
         if (isNaN(arrival.getTime())) return;
-        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
-        arrival.setDate(arrival.getDate() + totalLT);
+        arrival.setDate(arrival.getDate() + getPoTotalLT(po));
         const daysFromNow = (arrival - todayDate) / 86400000;
         if (daysFromNow >= 0 && daysFromNow < warningDays) {
           totalIncoming += Number(po.qty || 0);
@@ -2852,8 +2912,7 @@ const App = () => {
     const monthlyPOs = Array(12).fill([]);
     activePOs.forEach(po => {
       const arrival = new Date(po.orderDate);
-      const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
-      arrival.setDate(arrival.getDate() + totalLT);
+      arrival.setDate(arrival.getDate() + getPoTotalLT(po));
       
       // 检查这个到货日期是否在接下来的12个月内
       const poMonth = arrival.getMonth();
@@ -2961,8 +3020,7 @@ const App = () => {
       (sku.pos || []).forEach(po => {
         if (po.status === 'cancelled') return;
         const qty = Number(po.qty || 0);
-        const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
-        const arrivalDate = new Date(new Date(po.orderDate).getTime() + totalLT * 86400000).toISOString().split('T')[0];
+        const arrivalDate = new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000).toISOString().split('T')[0];
 
         arrivals.push({
           skuName: sku.name,
@@ -3723,7 +3781,7 @@ const App = () => {
                                  <div className="space-y-2">
                                    {activeSku?.pos?.filter(po => po.status !== 'shelved' && po.status !== 'pre_order' && po.status !== 'cancelled').map(po => {
                                      const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays) * 86400000);
-                                     const arrivalDateObj = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000);
+                                     const arrivalDateObj = new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000);
                                      const arrivalDate = arrivalDateObj.toLocaleDateString();
                                      const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
                                      const isProductionWarning = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
@@ -3830,52 +3888,35 @@ const App = () => {
                                                   />天
                                                 </div>
                                              </div>
-                                             <div className="flex justify-between items-center text-blue-600 text-[9px]">
-                                                <span>头程</span>
+                                             {(po.legs || []).map((leg, legIdx) => (
+                                             <div key={legIdx} className={`flex justify-between items-center ${LEG_TEXT_COLORS[legIdx] || 'text-slate-600'} text-[9px]`}>
+                                                <span>{LEG_LABELS[legIdx] || `${legIdx+1}程`}</span>
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                                                  <select value={leg.mode} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
-                                                    value={po.leg1Days}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
-                                                    className="w-12 text-right bg-transparent border-b border-blue-100 text-xs"
+                                                    value={leg.days}
+                                                    onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'days', clampNonNegativeInt(e.target.value, `${LEG_LABELS[legIdx] || (legIdx+1)+'程'}时效`))}
+                                                    className={`w-12 text-right bg-transparent border-b ${LEG_BORDER_COLORS[legIdx] || 'border-slate-100'} text-xs`}
                                                   />天
+                                                  {(po.legs || []).length > 1 && (
+                                                    <button onClick={() => removePOLeg(activeSku.id, po.id, legIdx)} className="text-slate-300 hover:text-red-500 transition-colors ml-1" title="删除运输段">×</button>
+                                                  )}
                                                 </div>
                                              </div>
-                                             <div className="flex justify-between items-center text-orange-600 text-[9px]">
-                                                <span>二程</span>
-                                                <span className="flex items-center gap-1">
-                                                  <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                                                </span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={po.leg2Days}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
-                                                    className="w-12 text-right bg-transparent border-b border-orange-100 text-xs"
-                                                  />天
-                                                </div>
-                                             </div>
-                                             <div className="flex justify-between items-center text-emerald-600 text-[9px]">
-                                                <span>三程</span>
-                                                <span className="flex items-center gap-1">
-                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                                                </span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={po.leg3Days}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg3Days', clampNonNegativeInt(e.target.value, '三程时效'))}
-                                                    className="w-12 text-right bg-transparent border-b border-emerald-100 text-xs"
-                                                  />天
-                                                </div>
-                                             </div>
+                                             ))}
+                                             <button
+                                               onClick={() => addPOLeg(activeSku.id, po.id)}
+                                               className="w-full text-center text-[9px] font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded py-0.5 mt-1 transition-colors"
+                                             >
+                                               + 添加运输段
+                                             </button>
                                           </div>
                                           <div className="mt-2 flex items-center justify-between text-[9px]">
                                             <div className="font-black text-indigo-500 italic">
-                                              预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)+Number(po.leg3Days)) * 86400000).toLocaleDateString()}
+                                              预计到货: {new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000).toLocaleDateString()}
                                             </div>
                                             <div className="flex items-center gap-1">
                                               <button 
@@ -3917,7 +3958,7 @@ const App = () => {
                                {expandedPoGroups.completed && (
                                  <div className="space-y-2">
                                    {activeSku?.pos?.filter(po => po.status === 'shelved').map(po => {
-                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000).toLocaleDateString();
+                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000).toLocaleDateString();
                                      const isExpanded = expandedPoId === po.id;
                                      
                                      return (
@@ -3941,7 +3982,7 @@ const App = () => {
                                         )}
                                         {isExpanded && (
                                           <div className="mt-2 text-[9px] text-slate-600 italic">
-                                            预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)+Number(po.leg3Days)) * 86400000).toLocaleDateString()}
+                                            预计到货: {new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000).toLocaleDateString()}
                                           </div>
                                         )}
                                      </div>
@@ -3965,7 +4006,7 @@ const App = () => {
                                {expandedPoGroups.pre_order && (
                                  <div className="space-y-2">
                                    {activeSku?.pos?.filter(po => po.status === 'pre_order').map(po => {
-                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays) + Number(po.leg1Days) + Number(po.leg2Days) + Number(po.leg3Days)) * 86400000).toLocaleDateString();
+                                     const arrivalDate = new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000).toLocaleDateString();
                                      const isExpanded = expandedPoId === po.id;
                                      return (
                                      <div key={po.id} className="rounded-xl relative group border border-slate-200 bg-slate-50/50 hover:border-slate-300 transition-all p-3">
@@ -4051,52 +4092,35 @@ const App = () => {
                                                   />天
                                                 </div>
                                              </div>
-                                             <div className="flex justify-between items-center text-blue-600 text-[9px]">
-                                                <span>头程</span>
+                                             {(po.legs || []).map((leg, legIdx) => (
+                                             <div key={legIdx} className={`flex justify-between items-center ${LEG_TEXT_COLORS[legIdx] || 'text-slate-600'} text-[9px]`}>
+                                                <span>{LEG_LABELS[legIdx] || `${legIdx+1}程`}</span>
                                                 <span className="flex items-center gap-1">
-                                                  <select value={po.leg1Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg1Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                                                  <select value={leg.mode} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                                                 </span>
                                                 <div className="flex items-center gap-1">
                                                   <input
                                                     type="number"
-                                                    value={po.leg1Days}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg1Days', clampNonNegativeInt(e.target.value, '头程时效'))}
-                                                    className="w-12 text-right bg-transparent border-b border-blue-100 text-xs"
+                                                    value={leg.days}
+                                                    onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'days', clampNonNegativeInt(e.target.value, `${LEG_LABELS[legIdx] || (legIdx+1)+'程'}时效`))}
+                                                    className={`w-12 text-right bg-transparent border-b ${LEG_BORDER_COLORS[legIdx] || 'border-slate-100'} text-xs`}
                                                   />天
+                                                  {(po.legs || []).length > 1 && (
+                                                    <button onClick={() => removePOLeg(activeSku.id, po.id, legIdx)} className="text-slate-300 hover:text-red-500 transition-colors ml-1" title="删除运输段">×</button>
+                                                  )}
                                                 </div>
                                              </div>
-                                             <div className="flex justify-between items-center text-orange-600 text-[9px]">
-                                                <span>二程</span>
-                                                <span className="flex items-center gap-1">
-                                                  <select value={po.leg2Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg2Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                                                </span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={po.leg2Days}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg2Days', clampNonNegativeInt(e.target.value, '二程时效'))}
-                                                    className="w-12 text-right bg-transparent border-b border-orange-100 text-xs"
-                                                  />天
-                                                </div>
-                                             </div>
-                                             <div className="flex justify-between items-center text-emerald-600 text-[9px]">
-                                                <span>三程</span>
-                                                <span className="flex items-center gap-1">
-                                                  <select value={po.leg3Mode} onChange={e => updatePO(activeSku.id, po.id, 'leg3Mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                                                </span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={po.leg3Days}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'leg3Days', clampNonNegativeInt(e.target.value, '三程时效'))}
-                                                    className="w-12 text-right bg-transparent border-b border-emerald-100 text-xs"
-                                                  />天
-                                                </div>
-                                             </div>
+                                             ))}
+                                             <button
+                                               onClick={() => addPOLeg(activeSku.id, po.id)}
+                                               className="w-full text-center text-[9px] font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded py-0.5 mt-1 transition-colors"
+                                             >
+                                               + 添加运输段
+                                             </button>
                                           </div>
                                           <div className="mt-2 flex items-center justify-between text-[9px]">
                                             <div className="font-black text-slate-500 italic">
-                                              预计到货: {new Date(new Date(po.orderDate).getTime() + (Number(po.prodDays)+Number(po.leg1Days)+Number(po.leg2Days)+Number(po.leg3Days)) * 86400000).toLocaleDateString()}
+                                              预计到货: {new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000).toLocaleDateString()}
                                             </div>
                                             <div className="flex items-center gap-1">
                                               <button
@@ -5541,8 +5565,7 @@ const App = () => {
               dashboardData.forEach(sku => {
                 (sku.pos || []).forEach(po => {
                   const arrivalDate = new Date(po.orderDate);
-                  const totalLT = Number(po.prodDays || 0) + Number(po.leg1Days || 0) + Number(po.leg2Days || 0) + Number(po.leg3Days || 0);
-                  arrivalDate.setDate(arrivalDate.getDate() + totalLT);
+                  arrivalDate.setDate(arrivalDate.getDate() + getPoTotalLT(po));
                   const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays || 0) * 86400000);
                   const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
                   const needsFollowUp = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
