@@ -3880,56 +3880,38 @@ const App = () => {
                                               />
                                             </div>
                                           </div>
-                                          <div className="space-y-1 bg-white/50 p-2 rounded-lg border border-slate-100 text-[10px] font-bold mb-3">
-                                             <div className="flex justify-between items-center text-slate-500 text-[9px]">
-                                                <span><Factory size={9} className="inline mr-1"/>生产周期</span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={po.prodDays}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
-                                                    className="w-12 text-right bg-transparent border-b border-slate-200 text-xs"
-                                                  />天
-                                                </div>
+                                          <div className="bg-white/50 p-2.5 rounded-lg border border-slate-100 text-[10px] font-bold mb-3">
+                                             <div className="grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center text-[7px] text-slate-400 uppercase tracking-wider pb-1 mb-1 border-b border-slate-100">
+                                               <span>阶段</span><span>方式</span><span className="text-right">天数</span><span className="text-right min-w-[3rem]">预估完成</span>
                                              </div>
-                                             {(po.legs || []).map((leg, legIdx) => (
-                                             <div key={legIdx} className={`flex justify-between items-center ${LEG_TEXT_COLORS[legIdx] || 'text-slate-600'} text-[9px]`}>
-                                                <span>{LEG_LABELS[legIdx] || `${legIdx+1}程`}</span>
-                                                <span className="flex items-center gap-1">
-                                                  <select value={leg.mode} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                                                </span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={leg.days}
-                                                    onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'days', clampNonNegativeInt(e.target.value, `${LEG_LABELS[legIdx] || (legIdx+1)+'程'}时效`))}
-                                                    className={`w-12 text-right bg-transparent border-b ${LEG_BORDER_COLORS[legIdx] || 'border-slate-100'} text-xs`}
-                                                  />天
-                                                  {(po.legs || []).length > 1 && (
-                                                    <button onClick={() => removePOLeg(activeSku.id, po.id, legIdx)} className="text-slate-300 hover:text-red-500 transition-colors ml-1" title="删除运输段">×</button>
-                                                  )}
-                                                </div>
+                                             {(() => { const d = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays || 0) * 86400000); return (
+                                             <div className="grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center text-slate-500 text-[9px] py-0.5">
+                                               <span className="flex items-center gap-0.5 whitespace-nowrap"><Factory size={9}/>生产</span>
+                                               <span className="text-slate-300 text-[8px]">—</span>
+                                               <div className="flex items-center justify-end gap-0.5"><input type="number" value={po.prodDays} onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))} className="w-9 text-right bg-transparent border-b border-slate-200 text-[9px] font-mono"/><span className="text-[8px]">天</span></div>
+                                               <span className="text-right text-[8px] text-slate-400 font-mono tabular-nums" title={d.toLocaleDateString()}>{d.getMonth()+1}/{d.getDate()}</span>
                                              </div>
-                                             ))}
-                                             <button
-                                               onClick={() => addPOLeg(activeSku.id, po.id)}
-                                               className="w-full text-center text-[9px] font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded py-0.5 mt-1 transition-colors"
-                                             >
-                                               + 添加运输段
-                                             </button>
-                                             {po.status === 'inspecting' && (
-                                               <div className="flex justify-between items-center text-yellow-700 text-[9px] mt-1.5 pt-1.5 border-t border-dashed border-yellow-200">
-                                                 <span>🔍 预估查验天数</span>
-                                                 <div className="flex items-center gap-1">
-                                                   <input
-                                                     type="number"
-                                                     value={po.inspectionDays || 0}
-                                                     onChange={e => updatePO(activeSku.id, po.id, 'inspectionDays', clampNonNegativeInt(e.target.value, '查验天数'))}
-                                                     className="w-12 text-right bg-transparent border-b border-yellow-200 text-xs"
-                                                   />天
-                                                 </div>
+                                             ); })()}
+                                             {(po.legs || []).map((leg, legIdx) => { const cumDays = Number(po.prodDays || 0) + (po.legs || []).slice(0, legIdx + 1).reduce((s, l) => s + Number(l.days || 0), 0); const d = new Date(new Date(po.orderDate).getTime() + cumDays * 86400000); return (
+                                             <div key={legIdx} className={`grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center ${LEG_TEXT_COLORS[legIdx] || 'text-slate-600'} text-[9px] py-0.5`}>
+                                               <span className="truncate">{LEG_LABELS[legIdx] || `${legIdx+1}程`}</span>
+                                               <select value={leg.mode} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px] min-w-0">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                                               <div className="flex items-center justify-end gap-0.5">
+                                                 <input type="number" value={leg.days} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'days', clampNonNegativeInt(e.target.value, `${LEG_LABELS[legIdx] || (legIdx+1)+'程'}时效`))} className={`w-9 text-right bg-transparent border-b ${LEG_BORDER_COLORS[legIdx] || 'border-slate-100'} text-[9px] font-mono`}/><span className="text-[8px]">天</span>
+                                                 {(po.legs || []).length > 1 && <button onClick={() => removePOLeg(activeSku.id, po.id, legIdx)} className="text-slate-300 hover:text-red-500 transition-colors text-xs leading-none ml-0.5" title="删除">×</button>}
                                                </div>
-                                             )}
+                                               <span className={`text-right text-[8px] font-mono tabular-nums ${LEG_TEXT_COLORS[legIdx] || 'text-slate-500'}`} title={d.toLocaleDateString()}>{d.getMonth()+1}/{d.getDate()}</span>
+                                             </div>
+                                             ); })}
+                                             <button onClick={() => addPOLeg(activeSku.id, po.id)} className="w-full text-center text-[9px] font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded py-0.5 mt-1 transition-colors">+ 添加运输段</button>
+                                             {po.status === 'inspecting' && (() => { const d = new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000); return (
+                                             <div className="grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center text-yellow-700 text-[9px] py-0.5 mt-1 pt-1 border-t border-dashed border-yellow-200">
+                                               <span className="whitespace-nowrap">🔍查验</span>
+                                               <span className="text-yellow-400 text-[8px]">—</span>
+                                               <div className="flex items-center justify-end gap-0.5"><input type="number" value={po.inspectionDays || 0} onChange={e => updatePO(activeSku.id, po.id, 'inspectionDays', clampNonNegativeInt(e.target.value, '查验天数'))} className="w-9 text-right bg-transparent border-b border-yellow-200 text-[9px] font-mono"/><span className="text-[8px]">天</span></div>
+                                               <span className="text-right text-[8px] text-yellow-600 font-mono tabular-nums" title={d.toLocaleDateString()}>{d.getMonth()+1}/{d.getDate()}</span>
+                                             </div>
+                                             ); })()}
                                           </div>
                                           <div className="mt-2 flex items-center justify-between text-[9px]">
                                             <div className="font-black text-indigo-500 italic">
@@ -4097,56 +4079,38 @@ const App = () => {
                                               />
                                             </div>
                                           </div>
-                                          <div className="space-y-1 bg-white/50 p-2 rounded-lg border border-slate-100 text-[10px] font-bold mb-3">
-                                             <div className="flex justify-between items-center text-slate-500 text-[9px]">
-                                                <span><Factory size={9} className="inline mr-1"/>生产周期</span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={po.prodDays}
-                                                    onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))}
-                                                    className="w-12 text-right bg-transparent border-b border-slate-200 text-xs"
-                                                  />天
-                                                </div>
+                                          <div className="bg-white/50 p-2.5 rounded-lg border border-slate-100 text-[10px] font-bold mb-3">
+                                             <div className="grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center text-[7px] text-slate-400 uppercase tracking-wider pb-1 mb-1 border-b border-slate-100">
+                                               <span>阶段</span><span>方式</span><span className="text-right">天数</span><span className="text-right min-w-[3rem]">预估完成</span>
                                              </div>
-                                             {(po.legs || []).map((leg, legIdx) => (
-                                             <div key={legIdx} className={`flex justify-between items-center ${LEG_TEXT_COLORS[legIdx] || 'text-slate-600'} text-[9px]`}>
-                                                <span>{LEG_LABELS[legIdx] || `${legIdx+1}程`}</span>
-                                                <span className="flex items-center gap-1">
-                                                  <select value={leg.mode} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px]">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-                                                </span>
-                                                <div className="flex items-center gap-1">
-                                                  <input
-                                                    type="number"
-                                                    value={leg.days}
-                                                    onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'days', clampNonNegativeInt(e.target.value, `${LEG_LABELS[legIdx] || (legIdx+1)+'程'}时效`))}
-                                                    className={`w-12 text-right bg-transparent border-b ${LEG_BORDER_COLORS[legIdx] || 'border-slate-100'} text-xs`}
-                                                  />天
-                                                  {(po.legs || []).length > 1 && (
-                                                    <button onClick={() => removePOLeg(activeSku.id, po.id, legIdx)} className="text-slate-300 hover:text-red-500 transition-colors ml-1" title="删除运输段">×</button>
-                                                  )}
-                                                </div>
+                                             {(() => { const d = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays || 0) * 86400000); return (
+                                             <div className="grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center text-slate-500 text-[9px] py-0.5">
+                                               <span className="flex items-center gap-0.5 whitespace-nowrap"><Factory size={9}/>生产</span>
+                                               <span className="text-slate-300 text-[8px]">—</span>
+                                               <div className="flex items-center justify-end gap-0.5"><input type="number" value={po.prodDays} onChange={e => updatePO(activeSku.id, po.id, 'prodDays', clampNonNegativeInt(e.target.value, '生产周期'))} className="w-9 text-right bg-transparent border-b border-slate-200 text-[9px] font-mono"/><span className="text-[8px]">天</span></div>
+                                               <span className="text-right text-[8px] text-slate-400 font-mono tabular-nums" title={d.toLocaleDateString()}>{d.getMonth()+1}/{d.getDate()}</span>
                                              </div>
-                                             ))}
-                                             <button
-                                               onClick={() => addPOLeg(activeSku.id, po.id)}
-                                               className="w-full text-center text-[9px] font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded py-0.5 mt-1 transition-colors"
-                                             >
-                                               + 添加运输段
-                                             </button>
-                                             {po.status === 'inspecting' && (
-                                               <div className="flex justify-between items-center text-yellow-700 text-[9px] mt-1.5 pt-1.5 border-t border-dashed border-yellow-200">
-                                                 <span>🔍 预估查验天数</span>
-                                                 <div className="flex items-center gap-1">
-                                                   <input
-                                                     type="number"
-                                                     value={po.inspectionDays || 0}
-                                                     onChange={e => updatePO(activeSku.id, po.id, 'inspectionDays', clampNonNegativeInt(e.target.value, '查验天数'))}
-                                                     className="w-12 text-right bg-transparent border-b border-yellow-200 text-xs"
-                                                   />天
-                                                 </div>
+                                             ); })()}
+                                             {(po.legs || []).map((leg, legIdx) => { const cumDays = Number(po.prodDays || 0) + (po.legs || []).slice(0, legIdx + 1).reduce((s, l) => s + Number(l.days || 0), 0); const d = new Date(new Date(po.orderDate).getTime() + cumDays * 86400000); return (
+                                             <div key={legIdx} className={`grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center ${LEG_TEXT_COLORS[legIdx] || 'text-slate-600'} text-[9px] py-0.5`}>
+                                               <span className="truncate">{LEG_LABELS[legIdx] || `${legIdx+1}程`}</span>
+                                               <select value={leg.mode} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'mode', e.target.value)} className="bg-transparent border-none p-0 cursor-pointer text-[9px] min-w-0">{transportOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                                               <div className="flex items-center justify-end gap-0.5">
+                                                 <input type="number" value={leg.days} onChange={e => updatePOLeg(activeSku.id, po.id, legIdx, 'days', clampNonNegativeInt(e.target.value, `${LEG_LABELS[legIdx] || (legIdx+1)+'程'}时效`))} className={`w-9 text-right bg-transparent border-b ${LEG_BORDER_COLORS[legIdx] || 'border-slate-100'} text-[9px] font-mono`}/><span className="text-[8px]">天</span>
+                                                 {(po.legs || []).length > 1 && <button onClick={() => removePOLeg(activeSku.id, po.id, legIdx)} className="text-slate-300 hover:text-red-500 transition-colors text-xs leading-none ml-0.5" title="删除">×</button>}
                                                </div>
-                                             )}
+                                               <span className={`text-right text-[8px] font-mono tabular-nums ${LEG_TEXT_COLORS[legIdx] || 'text-slate-500'}`} title={d.toLocaleDateString()}>{d.getMonth()+1}/{d.getDate()}</span>
+                                             </div>
+                                             ); })}
+                                             <button onClick={() => addPOLeg(activeSku.id, po.id)} className="w-full text-center text-[9px] font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded py-0.5 mt-1 transition-colors">+ 添加运输段</button>
+                                             {po.status === 'inspecting' && (() => { const d = new Date(new Date(po.orderDate).getTime() + getPoTotalLT(po) * 86400000); return (
+                                             <div className="grid grid-cols-[2.5rem_minmax(2.5rem,1fr)_auto_auto] gap-x-2 items-center text-yellow-700 text-[9px] py-0.5 mt-1 pt-1 border-t border-dashed border-yellow-200">
+                                               <span className="whitespace-nowrap">🔍查验</span>
+                                               <span className="text-yellow-400 text-[8px]">—</span>
+                                               <div className="flex items-center justify-end gap-0.5"><input type="number" value={po.inspectionDays || 0} onChange={e => updatePO(activeSku.id, po.id, 'inspectionDays', clampNonNegativeInt(e.target.value, '查验天数'))} className="w-9 text-right bg-transparent border-b border-yellow-200 text-[9px] font-mono"/><span className="text-[8px]">天</span></div>
+                                               <span className="text-right text-[8px] text-yellow-600 font-mono tabular-nums" title={d.toLocaleDateString()}>{d.getMonth()+1}/{d.getDate()}</span>
+                                             </div>
+                                             ); })()}
                                           </div>
                                           <div className="mt-2 flex items-center justify-between text-[9px]">
                                             <div className="font-black text-slate-500 italic">
