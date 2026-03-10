@@ -482,6 +482,7 @@ const App = () => {
   const [offlineTxBatchExpiry, setOfflineTxBatchExpiry] = useState(''); // 入库/出库时选择的批次效期
   const [offlineTxNewExpiry, setOfflineTxNewExpiry] = useState(''); // 入库时新建效期
   const [offlineExpandedItemId, setOfflineExpandedItemId] = useState(null); // 库存总览展开批次明细
+  const [editingBatchItem, setEditingBatchItem] = useState(null); // { id, name, batches: [...], totalStock } 编辑批次分配弹窗
   const [offlineSelectedItemId, setOfflineSelectedItemId] = useState(null);
   const [offlineOverviewQuery, setOfflineOverviewQuery] = useState('');
   const [outLogFilters, setOutLogFilters] = useState({ sku: '', purpose: '', account: '', customer: '', trackingNo: '', dateFrom: '', dateTo: '' });
@@ -1542,6 +1543,7 @@ const App = () => {
     if (actionType === 'customer_delete') return '删除客户';
     if (actionType === 'profile_delete') return '删除地址';
     if (actionType === 'expired_destroy') return '过期销毁';
+    if (actionType === 'batch_edit') return '编辑批次分配';
     return '删除SKU';
   };
 
@@ -1586,6 +1588,20 @@ const App = () => {
       if (!Number.isFinite(itemId)) return;
       setOfflineInventoryItems(prev => prev.filter(item => item.id !== itemId));
       setOfflineInventoryLogs(prev => prev.filter(log => Number(log.itemId) !== itemId));
+      return;
+    }
+    if (approval.actionType === 'batch_edit') {
+      const { itemId: beid, newBatches, account: bEditAccount } = approval.payload;
+      const beidNum = Number(beid);
+      if (!Number.isFinite(beidNum) || !Array.isArray(newBatches)) return;
+      const now = new Date().toISOString();
+      setOfflineInventoryItems(prev => prev.map(item => {
+        if (item.id !== beidNum) return item;
+        const cleanBatches = newBatches.filter(b => b.qty > 0).map(b => ({ expiryDate: String(b.expiryDate || ''), qty: Number(b.qty) }));
+        cleanBatches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
+        const newTotal = cleanBatches.reduce((s, b) => s + b.qty, 0);
+        return { ...item, batches: cleanBatches, currentStock: newTotal, updatedAt: now };
+      }));
       return;
     }
     if (approval.actionType === 'expired_destroy') {
@@ -2043,13 +2059,17 @@ const App = () => {
       }
     }
 
-    // 入库时确定批次效期
+    // 入库时确定批次效期（必须选择效期）
     let inboundExpiry = '';
     if (txType === 'in') {
       if (batchExpiry === '__new__') {
         inboundExpiry = String(offlineTxNewExpiry || '').trim().slice(0, 10);
       } else {
         inboundExpiry = batchExpiry;
+      }
+      if (!inboundExpiry) {
+        setWarning('入库请选择或新增效期批次');
+        return;
       }
     } else {
       inboundExpiry = batchExpiry;
@@ -4738,7 +4758,7 @@ const App = () => {
                         </select>
                       );
                     }
-                    // 入库：显示现有批次 + 新增效期选项
+                    // 入库：必须选择效期批次
                     return (
                       <>
                         <select
@@ -4746,7 +4766,7 @@ const App = () => {
                           onChange={e => { setOfflineTxBatchExpiry(e.target.value); if (e.target.value !== '__new__') setOfflineTxNewExpiry(''); }}
                           className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
                         >
-                          <option value="">入库到默认批次（无效期）</option>
+                          <option value="">请选择效期批次（必填）</option>
                           {batches.filter(b => b.expiryDate).map((b, idx) => (
                             <option key={idx} value={b.expiryDate}>
                               入库到已有批次：{b.expiryDate}（当前 {b.qty}）
@@ -4949,16 +4969,28 @@ const App = () => {
                                 </button>
                               </td>
                               <td className="px-4 py-3 text-center">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteOfflineInventoryItem(item.id);
-                                  }}
-                                  disabled={!canEditData}
-                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
-                                >
-                                  <Trash2 size={12} /> 删除
-                                </button>
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingBatchItem({ id: item.id, name: item.name, totalStock: item.currentStock, batches: (item.batches || []).map(b => ({ ...b })) });
+                                    }}
+                                    disabled={!canEditData}
+                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-indigo-300 text-indigo-700 hover:bg-indigo-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                  >
+                                    ✏️ 编辑
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteOfflineInventoryItem(item.id);
+                                    }}
+                                    disabled={!canEditData}
+                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                  >
+                                    <Trash2 size={12} /> 删除
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                             {isExpanded && batches.length > 0 && (
@@ -5324,6 +5356,137 @@ const App = () => {
                       保存修改
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 编辑批次分配弹窗 */}
+          {editingBatchItem && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setEditingBatchItem(null)}/>
+              <div className="relative bg-white rounded-2xl shadow-2xl w-[520px] max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-6 py-4 border-b">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800">编辑批次分配</h3>
+                    <p className="text-[10px] text-slate-500 font-medium mt-0.5">{editingBatchItem.name} · 总库存 {editingBatchItem.totalStock}</p>
+                  </div>
+                  <button onClick={() => setEditingBatchItem(null)} className="p-1.5 hover:bg-slate-100 rounded-lg"><X size={16}/></button>
+                </div>
+                <div className="p-6 space-y-4">
+                  {(() => {
+                    const currentTotal = editingBatchItem.batches.reduce((s, b) => s + Number(b.qty || 0), 0);
+                    const diff = currentTotal - editingBatchItem.totalStock;
+                    return (
+                      <>
+                        <div className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-black ${diff === 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
+                          <span>批次合计：{currentTotal}</span>
+                          <span>目标总数：{editingBatchItem.totalStock}</span>
+                          {diff !== 0 && <span>差异：{diff > 0 ? '+' : ''}{diff}</span>}
+                          {diff === 0 && <span>✓ 匹配</span>}
+                        </div>
+                        <div className="text-[10px] text-amber-700 font-medium bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                          调整各批次数量，总数必须等于已入库总数 {editingBatchItem.totalStock}。提交后需管理员审批通过方可生效。
+                        </div>
+                        <div className="border border-slate-200 rounded-lg overflow-hidden">
+                          <table className="w-full text-xs">
+                            <thead className="bg-slate-100 text-slate-500 uppercase">
+                              <tr>
+                                <th className="px-3 py-2 text-left">失效日期</th>
+                                <th className="px-3 py-2 text-right w-32">数量</th>
+                                <th className="px-3 py-2 text-center w-16">删除</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {editingBatchItem.batches.map((b, bIdx) => (
+                                <tr key={bIdx}>
+                                  <td className="px-3 py-2 font-bold text-slate-700">{b.expiryDate || '无效期'}</td>
+                                  <td className="px-3 py-2 text-right">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={b.qty}
+                                      onChange={e => {
+                                        const val = Math.max(0, Number(e.target.value) || 0);
+                                        setEditingBatchItem(prev => ({
+                                          ...prev,
+                                          batches: prev.batches.map((bb, i) => i === bIdx ? { ...bb, qty: val } : bb)
+                                        }));
+                                      }}
+                                      className="w-24 text-right border border-slate-300 rounded px-2 py-1 text-xs font-black"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2 text-center">
+                                    <button
+                                      onClick={() => setEditingBatchItem(prev => ({ ...prev, batches: prev.batches.filter((_, i) => i !== bIdx) }))}
+                                      className="text-rose-500 hover:text-rose-700 text-xs font-bold"
+                                    >✕</button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <button
+                          onClick={() => setEditingBatchItem(prev => ({ ...prev, batches: [...prev.batches, { expiryDate: '', qty: 0 }] }))}
+                          className="w-full py-2 border border-dashed border-slate-300 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50"
+                        >＋ 新增批次行</button>
+                        {editingBatchItem.batches.some(b => !b.expiryDate) && (
+                          <div className="space-y-2">
+                            {editingBatchItem.batches.map((b, bIdx) => !b.expiryDate ? (
+                              <div key={bIdx} className="flex items-center gap-2">
+                                <span className="text-[10px] text-slate-500 font-bold w-20">第{bIdx + 1}行效期：</span>
+                                <input
+                                  type="date"
+                                  value={b.expiryDate}
+                                  onChange={e => setEditingBatchItem(prev => ({
+                                    ...prev,
+                                    batches: prev.batches.map((bb, i) => i === bIdx ? { ...bb, expiryDate: e.target.value } : bb)
+                                  }))}
+                                  className="flex-1 px-2 py-1 border border-amber-300 bg-amber-50 rounded text-xs font-mono"
+                                />
+                              </div>
+                            ) : null)}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+                <div className="flex items-center justify-end gap-2 px-6 py-4 border-t bg-slate-50 rounded-b-2xl">
+                  <button onClick={() => setEditingBatchItem(null)} className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-xs font-bold">
+                    取消
+                  </button>
+                  <button
+                    onClick={() => {
+                      const batches = editingBatchItem.batches;
+                      const total = batches.reduce((s, b) => s + Number(b.qty || 0), 0);
+                      if (total !== editingBatchItem.totalStock) {
+                        setWarning(`批次合计 ${total} 与库存总数 ${editingBatchItem.totalStock} 不一致，请调整`);
+                        return;
+                      }
+                      if (batches.some(b => !b.expiryDate && b.qty > 0)) {
+                        setWarning('有批次未填写失效日期，请补充');
+                        return;
+                      }
+                      // 检查重复效期
+                      const dates = batches.filter(b => b.qty > 0).map(b => b.expiryDate);
+                      if (new Set(dates).size !== dates.length) {
+                        setWarning('存在重复的失效日期，请合并或修改');
+                        return;
+                      }
+                      const account = String(user?.email || '').trim();
+                      requestDeleteApproval('batch_edit', `${editingBatchItem.name} 批次重新分配`, {
+                        itemId: editingBatchItem.id,
+                        newBatches: batches.filter(b => b.qty > 0).map(b => ({ expiryDate: b.expiryDate, qty: Number(b.qty) })),
+                        account,
+                      });
+                      setEditingBatchItem(null);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-xs font-black"
+                  >
+                    提交审批
+                  </button>
                 </div>
               </div>
             </div>
