@@ -61,6 +61,7 @@ const PURPOSE_OPTIONS = [
   { key: 'return', label: '退货处理' },
   { key: 'gift', label: '赠品' },
   { key: 'scrap', label: '损耗报废' },
+  { key: 'expired_destroy', label: '过期销毁' },
 ];
 const PURPOSE_KEYS = PURPOSE_OPTIONS.map(p => p.key);
 const getPurposeLabel = (purpose) => {
@@ -185,6 +186,17 @@ function normalizeSalesCell(cell, fallbackForecast = null) {
   };
 }
 
+function sanitizeBatches(batches, currentStock) {
+  if (!Array.isArray(batches) || batches.length === 0) {
+    // 向后兼容：无批次数据时，创建一个无效期的默认批次
+    return currentStock > 0 ? [{ expiryDate: '', qty: currentStock }] : [];
+  }
+  return batches.filter(Boolean).map(b => ({
+    expiryDate: String(b.expiryDate ?? '').slice(0, 10),
+    qty: Math.max(0, Number(b.qty ?? 0) || 0),
+  })).filter(b => b.qty > 0 || b.expiryDate);
+}
+
 function sanitizeOfflineInventoryItems(items) {
   const safeArr = Array.isArray(items) ? items : [];
   return safeArr
@@ -192,13 +204,16 @@ function sanitizeOfflineInventoryItems(items) {
     .map((item, idx) => {
       const id = Number.isFinite(Number(item.id)) ? Number(item.id) : Date.now() + idx;
       const name = String(item.name ?? `线下品项${idx + 1}`).trim();
-      const currentStock = Math.max(0, Number(item.currentStock ?? 0) || 0);
+      const rawStock = Math.max(0, Number(item.currentStock ?? 0) || 0);
+      const batches = sanitizeBatches(item.batches, rawStock);
+      // currentStock = 批次合计（若有批次数据）
+      const currentStock = batches.length > 0 ? batches.reduce((s, b) => s + b.qty, 0) : rawStock;
       const inboundTotal = Math.max(0, Number(item.inboundTotal ?? 0) || 0);
       const outboundTotal = Math.max(0, Number(item.outboundTotal ?? 0) || 0);
       const lastOutboundAccount = String(item.lastOutboundAccount ?? '');
       const remark = String(item.remark ?? '');
       const updatedAt = String(item.updatedAt ?? '');
-      return { id, name, currentStock, inboundTotal, outboundTotal, lastOutboundAccount, remark, updatedAt };
+      return { id, name, currentStock, batches, inboundTotal, outboundTotal, lastOutboundAccount, remark, updatedAt };
     })
     .filter(item => item.name.length > 0);
 }
@@ -226,10 +241,11 @@ function sanitizeOfflineInventoryLogs(logs) {
       const profilePhone = String(log.profilePhone ?? '');
       const profileAddress = String(log.profileAddress ?? '');
       const trackingNo = String(log.trackingNo ?? '');
+      const batchExpiryDate = String(log.batchExpiryDate ?? '').slice(0, 10);
       const remark = String(log.remark ?? '');
       const operator = String(log.operator ?? '');
       const happenedAt = String(log.happenedAt ?? new Date().toISOString());
-      return { id, itemId, itemName, type, purpose, qty, account, customerId, customerName, customerPlatform, customerIdentity, customerPhone, profileId, profileLabel, profileReceiver, profilePhone, profileAddress, trackingNo, remark, operator, happenedAt };
+      return { id, itemId, itemName, type, purpose, qty, account, customerId, customerName, customerPlatform, customerIdentity, customerPhone, profileId, profileLabel, profileReceiver, profilePhone, profileAddress, trackingNo, batchExpiryDate, remark, operator, happenedAt };
     })
     .filter(log => log.itemName && log.qty > 0);
 }
@@ -463,6 +479,9 @@ const App = () => {
   const [offlineTxCustomerId, setOfflineTxCustomerId] = useState('');
   const [offlineTxProfileId, setOfflineTxProfileId] = useState('');
   const [offlineTxTrackingNo, setOfflineTxTrackingNo] = useState('');
+  const [offlineTxBatchExpiry, setOfflineTxBatchExpiry] = useState(''); // 入库/出库时选择的批次效期
+  const [offlineTxNewExpiry, setOfflineTxNewExpiry] = useState(''); // 入库时新建效期
+  const [offlineExpandedItemId, setOfflineExpandedItemId] = useState(null); // 库存总览展开批次明细
   const [offlineSelectedItemId, setOfflineSelectedItemId] = useState(null);
   const [offlineOverviewQuery, setOfflineOverviewQuery] = useState('');
   const [outLogFilters, setOutLogFilters] = useState({ sku: '', purpose: '', account: '', customer: '', trackingNo: '', dateFrom: '', dateTo: '' });
@@ -1522,6 +1541,7 @@ const App = () => {
     if (actionType === 'customer_edit') return '编辑客户信息';
     if (actionType === 'customer_delete') return '删除客户';
     if (actionType === 'profile_delete') return '删除地址';
+    if (actionType === 'expired_destroy') return '过期销毁';
     return '删除SKU';
   };
 
@@ -1566,6 +1586,43 @@ const App = () => {
       if (!Number.isFinite(itemId)) return;
       setOfflineInventoryItems(prev => prev.filter(item => item.id !== itemId));
       setOfflineInventoryLogs(prev => prev.filter(log => Number(log.itemId) !== itemId));
+      return;
+    }
+    if (approval.actionType === 'expired_destroy') {
+      const { itemId: eid, batchExpiryDate, qty: destroyQty, remark: destroyRemark, account: destroyAccount } = approval.payload;
+      const eidNum = Number(eid);
+      const qtyNum = Number(destroyQty);
+      if (!Number.isFinite(eidNum) || !Number.isFinite(qtyNum) || qtyNum <= 0) return;
+      const now = new Date().toISOString();
+      setOfflineInventoryItems(prev => prev.map(item => {
+        if (item.id !== eidNum) return item;
+        const currentStock = Number(item.currentStock || 0);
+        const outboundTotal = Number(item.outboundTotal || 0);
+        let batches = [...(item.batches || [])];
+        const bIdx = batches.findIndex(b => b.expiryDate === batchExpiryDate);
+        if (bIdx >= 0) {
+          const newQty = Math.max(0, batches[bIdx].qty - qtyNum);
+          if (newQty > 0) { batches[bIdx] = { ...batches[bIdx], qty: newQty }; }
+          else { batches.splice(bIdx, 1); }
+        }
+        return { ...item, currentStock: Math.max(0, currentStock - qtyNum), batches, outboundTotal: outboundTotal + qtyNum, updatedAt: now };
+      }));
+      setOfflineInventoryLogs(prev => [{
+        id: Date.now(),
+        itemId: eidNum,
+        itemName: offlineInventoryItems.find(i => i.id === eidNum)?.name || '',
+        type: 'out',
+        purpose: 'expired_destroy',
+        qty: qtyNum,
+        account: destroyAccount || user?.email || '',
+        customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
+        profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
+        trackingNo: '',
+        batchExpiryDate: batchExpiryDate || '',
+        remark: destroyRemark || `过期销毁 [${batchExpiryDate || '无效期'}]`,
+        operator: user?.email || '',
+        happenedAt: now,
+      }, ...prev]);
       return;
     }
     if (approval.actionType === 'po') {
@@ -1685,6 +1742,7 @@ const App = () => {
       id: Date.now(),
       name,
       currentStock: initialStock,
+      batches: initialStock > 0 ? [{ expiryDate: '', qty: initialStock }] : [],
       inboundTotal: initialStock,
       outboundTotal: 0,
       lastOutboundAccount: '',
@@ -1700,6 +1758,7 @@ const App = () => {
         type: 'in',
         qty: initialStock,
         account: '系统初始化',
+        batchExpiryDate: '',
         remark: '初始化库存',
         operator: user?.email || '',
         happenedAt: now,
@@ -1930,6 +1989,7 @@ const App = () => {
     const txCustomerIdNum = Number(offlineTxCustomerId);
     const txProfileIdNum = Number(offlineTxProfileId);
     const trackingNo = String(offlineTxTrackingNo || '').trim();
+    const batchExpiry = String(offlineTxBatchExpiry || '').trim();
     if (!Number.isFinite(itemIdNum)) {
       setWarning('请选择线下库存品项');
       return;
@@ -1947,9 +2007,52 @@ const App = () => {
       setWarning('线下库存品项不存在');
       return;
     }
-    if (txType === 'out' && qty > Number(targetItem.currentStock || 0)) {
-      setWarning('出库数量超过当前库存');
-      return;
+
+    // 出库时必须选择批次
+    if (txType === 'out') {
+      if (!batchExpiry) {
+        setWarning('出库请选择批次（效期）');
+        return;
+      }
+      const batch = (targetItem.batches || []).find(b => b.expiryDate === batchExpiry);
+      if (!batch || batch.qty < qty) {
+        setWarning(`该批次库存不足（可用：${batch?.qty || 0}）`);
+        return;
+      }
+      // 过期批次限制：仅"过期销毁"用途可出库
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (batchExpiry && batchExpiry <= todayStr && txPurpose !== 'expired_destroy') {
+        setWarning('该批次已过期，仅允许「过期销毁」用途出库');
+        return;
+      }
+      // 过期销毁需管理员审批
+      if (txPurpose === 'expired_destroy') {
+        const ok = requestDeleteApproval('expired_destroy', `${targetItem.name} [${batchExpiry || '无效期'}] ×${qty}`, {
+          itemId: itemIdNum,
+          batchExpiryDate: batchExpiry,
+          qty,
+          remark,
+          account,
+        });
+        if (ok) {
+          setOfflineTxQty('');
+          setOfflineTxRemark('');
+          setOfflineTxBatchExpiry('');
+        }
+        return;
+      }
+    }
+
+    // 入库时确定批次效期
+    let inboundExpiry = '';
+    if (txType === 'in') {
+      if (batchExpiry === '__new__') {
+        inboundExpiry = String(offlineTxNewExpiry || '').trim().slice(0, 10);
+      } else {
+        inboundExpiry = batchExpiry;
+      }
+    } else {
+      inboundExpiry = batchExpiry;
     }
 
     const selectedCustomer = Number.isFinite(txCustomerIdNum)
@@ -1980,18 +2083,40 @@ const App = () => {
       const currentStock = Number(item.currentStock || 0);
       const inboundTotal = Number(item.inboundTotal || 0);
       const outboundTotal = Number(item.outboundTotal || 0);
+      let batches = [...(item.batches || [])];
       if (txType === 'in') {
+        // 入库：加到对应批次或新建
+        const idx = batches.findIndex(b => b.expiryDate === inboundExpiry);
+        if (idx >= 0) {
+          batches[idx] = { ...batches[idx], qty: batches[idx].qty + qty };
+        } else {
+          batches.push({ expiryDate: inboundExpiry, qty });
+        }
+        // 按效期排序（无效期排最后）
+        batches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
         return {
           ...item,
           currentStock: currentStock + qty,
+          batches,
           inboundTotal: inboundTotal + qty,
           remark: remark || item.remark,
           updatedAt: now,
         };
       }
+      // 出库：从指定批次扣
+      const idx = batches.findIndex(b => b.expiryDate === inboundExpiry);
+      if (idx >= 0) {
+        const newQty = Math.max(0, batches[idx].qty - qty);
+        if (newQty > 0) {
+          batches[idx] = { ...batches[idx], qty: newQty };
+        } else {
+          batches.splice(idx, 1);
+        }
+      }
       return {
         ...item,
         currentStock: Math.max(0, currentStock - qty),
+        batches,
         outboundTotal: outboundTotal + (qty <= currentStock ? qty : currentStock),
         lastOutboundAccount: account,
         remark: remark || item.remark,
@@ -2018,6 +2143,7 @@ const App = () => {
       profilePhone: selectedProfile?.phone || '',
       profileAddress: selectedProfile?.address || '',
       trackingNo: txType === 'out' ? trackingNo : '',
+      batchExpiryDate: txType === 'in' ? inboundExpiry : batchExpiry,
       remark,
       operator: user?.email || '',
       happenedAt: now,
@@ -2025,6 +2151,8 @@ const App = () => {
 
     setOfflineTxQty('');
     setOfflineTxRemark('');
+    setOfflineTxBatchExpiry('');
+    setOfflineTxNewExpiry('');
   };
 
   // 库存校准：用户输入实际盘点数量，系统自动计算差值并生成调整记录
@@ -2069,6 +2197,7 @@ const App = () => {
       customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
       profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
       trackingNo: '',
+      batchExpiryDate: '',
       remark: remark || `库存校准：${currentStock} → ${actualStock}（${delta > 0 ? '+' : ''}${delta}）`,
       operator: user?.email || '',
       happenedAt: now,
@@ -4482,7 +4611,7 @@ const App = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-5 gap-4 mb-5">
+          <div className="grid grid-cols-6 gap-4 mb-5">
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <div className="text-[10px] font-black text-slate-500 uppercase">线下品项数</div>
               <div className="text-2xl font-black text-slate-800">{offlineInventorySummary.itemCount}</div>
@@ -4498,6 +4627,10 @@ const App = () => {
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <div className="text-[10px] font-black text-slate-500 uppercase">累计出库</div>
               <div className="text-2xl font-black text-rose-700">{Math.round(offlineInventorySummary.outboundTotal).toLocaleString()}</div>
+            </div>
+            <div className={`bg-white border rounded-xl px-4 py-3 ${(() => { const todayStr = new Date().toISOString().split('T')[0]; const expCount = offlineInventoryItems.reduce((c, item) => c + (item.batches || []).filter(b => b.expiryDate && b.expiryDate <= todayStr && b.qty > 0).length, 0); return expCount > 0 ? 'border-rose-300 bg-rose-50' : 'border-slate-200'; })()}`}>
+              <div className="text-[10px] font-black text-slate-500 uppercase">过期批次</div>
+              <div className="text-2xl font-black text-rose-700">{(() => { const todayStr = new Date().toISOString().split('T')[0]; return offlineInventoryItems.reduce((c, item) => c + (item.batches || []).filter(b => b.expiryDate && b.expiryDate <= todayStr && b.qty > 0).length, 0); })()}</div>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <div className="text-[10px] font-black text-slate-500 uppercase">客户 / 收件信息</div>
@@ -4579,6 +4712,60 @@ const App = () => {
                       ))}
                     </select>
                   )}
+                  {/* 批次（效期）选择 */}
+                  {(() => {
+                    const txItem = offlineInventoryItems.find(i => i.id === Number(offlineTxItemId));
+                    const batches = txItem?.batches || [];
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    if (offlineTxType === 'out') {
+                      // 出库：只显示有库存的批次
+                      const availBatches = batches.filter(b => b.qty > 0);
+                      return (
+                        <select
+                          value={offlineTxBatchExpiry}
+                          onChange={e => setOfflineTxBatchExpiry(e.target.value)}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                        >
+                          <option value="">请选择批次（效期）</option>
+                          {availBatches.map((b, idx) => {
+                            const isExpired = b.expiryDate && b.expiryDate <= todayStr;
+                            return (
+                              <option key={idx} value={b.expiryDate}>
+                                {b.expiryDate || '无效期'} · 库存 {b.qty}{isExpired ? ' ⚠️已过期' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      );
+                    }
+                    // 入库：显示现有批次 + 新增效期选项
+                    return (
+                      <>
+                        <select
+                          value={offlineTxBatchExpiry}
+                          onChange={e => { setOfflineTxBatchExpiry(e.target.value); if (e.target.value !== '__new__') setOfflineTxNewExpiry(''); }}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
+                        >
+                          <option value="">入库到默认批次（无效期）</option>
+                          {batches.filter(b => b.expiryDate).map((b, idx) => (
+                            <option key={idx} value={b.expiryDate}>
+                              入库到已有批次：{b.expiryDate}（当前 {b.qty}）
+                            </option>
+                          ))}
+                          <option value="__new__">＋ 新增效期批次</option>
+                        </select>
+                        {offlineTxBatchExpiry === '__new__' && (
+                          <input
+                            type="date"
+                            value={offlineTxNewExpiry}
+                            onChange={e => setOfflineTxNewExpiry(e.target.value)}
+                            className="w-full px-3 py-2 border border-amber-300 bg-amber-50 rounded-lg text-sm font-medium"
+                            placeholder="输入失效日期"
+                          />
+                        )}
+                      </>
+                    );
+                  })()}
                   <input
                     type="number"
                     value={offlineTxQty}
@@ -4717,48 +4904,108 @@ const App = () => {
                     className="w-56 px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium"
                   />
                 </div>
-                <div className="overflow-auto max-h-[260px]">
-                  <table className="w-auto min-w-[420px] text-left text-xs">
+                <div className="overflow-auto max-h-[320px]">
+                  <table className="w-auto min-w-[520px] text-left text-xs">
                     <colgroup>
-                      <col style={{ width: '240px' }} />
-                      <col style={{ width: '140px' }} />
+                      <col style={{ width: '200px' }} />
+                      <col style={{ width: '100px' }} />
+                      <col style={{ width: '80px' }} />
                       <col style={{ width: '96px' }} />
                     </colgroup>
-                    <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase">
+                    <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase z-10">
                       <tr>
                         <th className="px-4 py-3">品项</th>
                         <th className="px-4 py-3 text-right">现有库存</th>
+                        <th className="px-4 py-3 text-center">批次</th>
                         <th className="px-4 py-3 text-center">操作</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {filteredOfflineInventoryItems.length === 0 ? (
-                        <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={3}>暂无线下库存品项</td></tr>
-                      ) : filteredOfflineInventoryItems.map(item => (
-                        <tr
-                          key={item.id}
-                          onClick={() => {
-                            setOfflineSelectedItemId(item.id);
-                            setOfflineTxItemId(String(item.id));
-                          }}
-                          className={`cursor-pointer hover:bg-slate-50 ${Number(offlineSelectedItemId) === Number(item.id) ? 'bg-indigo-50' : ''}`}
-                        >
-                          <td className="px-4 py-3 font-bold text-slate-700">{item.name}</td>
-                          <td className="px-4 py-3 text-right font-black text-indigo-700">{Math.round(item.currentStock).toLocaleString()}</td>
-                          <td className="px-4 py-3 text-center">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteOfflineInventoryItem(item.id);
+                        <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={4}>暂无线下库存品项</td></tr>
+                      ) : filteredOfflineInventoryItems.map(item => {
+                        const isExpanded = offlineExpandedItemId === item.id;
+                        const todayStr = new Date().toISOString().split('T')[0];
+                        const batches = item.batches || [];
+                        const expiredCount = batches.filter(b => b.expiryDate && b.expiryDate <= todayStr).length;
+                        return (
+                          <React.Fragment key={item.id}>
+                            <tr
+                              onClick={() => {
+                                setOfflineSelectedItemId(item.id);
+                                setOfflineTxItemId(String(item.id));
                               }}
-                              disabled={!canEditData}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                              className={`cursor-pointer hover:bg-slate-50 ${Number(offlineSelectedItemId) === Number(item.id) ? 'bg-indigo-50' : ''}`}
                             >
-                              <Trash2 size={12} /> 删除
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                              <td className="px-4 py-3 font-bold text-slate-700">{item.name}</td>
+                              <td className="px-4 py-3 text-right font-black text-indigo-700">{Math.round(item.currentStock).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-center">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setOfflineExpandedItemId(isExpanded ? null : item.id); }}
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-bold ${isExpanded ? 'bg-indigo-100 border-indigo-300 text-indigo-700' : 'border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+                                >
+                                  {batches.length}批{expiredCount > 0 && <span className="text-rose-600">({expiredCount}过期)</span>}
+                                  <span className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▾</span>
+                                </button>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteOfflineInventoryItem(item.id);
+                                  }}
+                                  disabled={!canEditData}
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                >
+                                  <Trash2 size={12} /> 删除
+                                </button>
+                              </td>
+                            </tr>
+                            {isExpanded && batches.length > 0 && (
+                              <tr>
+                                <td colSpan={4} className="px-4 py-2 bg-slate-50/80">
+                                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                    <table className="w-full text-[11px]">
+                                      <thead className="bg-slate-100 text-slate-500 uppercase">
+                                        <tr>
+                                          <th className="px-3 py-1.5 text-left">失效日期</th>
+                                          <th className="px-3 py-1.5 text-right">数量</th>
+                                          <th className="px-3 py-1.5 text-center">状态</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        {batches.map((b, bIdx) => {
+                                          const isExpiredBatch = b.expiryDate && b.expiryDate <= todayStr;
+                                          const sixMonthLater = new Date();
+                                          sixMonthLater.setMonth(sixMonthLater.getMonth() + 6);
+                                          const sixMonthStr = sixMonthLater.toISOString().split('T')[0];
+                                          const isNearExpiry = b.expiryDate && !isExpiredBatch && b.expiryDate <= sixMonthStr;
+                                          return (
+                                            <tr key={bIdx} className={isExpiredBatch ? 'bg-rose-50' : isNearExpiry ? 'bg-amber-50' : ''}>
+                                              <td className={`px-3 py-1.5 font-bold ${isExpiredBatch ? 'text-rose-700' : isNearExpiry ? 'text-amber-700' : 'text-slate-700'}`}>
+                                                {b.expiryDate || '无效期'}
+                                              </td>
+                                              <td className="px-3 py-1.5 text-right font-black text-slate-800">{b.qty}</td>
+                                              <td className="px-3 py-1.5 text-center">
+                                                {isExpiredBatch
+                                                  ? <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-100 text-rose-700">已过期</span>
+                                                  : isNearExpiry
+                                                    ? <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-100 text-amber-700">临期</span>
+                                                    : <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600">正常</span>
+                                                }
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -4780,6 +5027,7 @@ const App = () => {
                             <th className="px-4 py-3">时间</th>
                             <th className="px-4 py-3">类型</th>
                             <th className="px-4 py-3">用途</th>
+                            <th className="px-4 py-3">效期</th>
                             <th className="px-4 py-3 text-right">数量</th>
                             <th className="px-4 py-3">操作账号</th>
                             <th className="px-4 py-3">客户 / 收件</th>
@@ -4789,7 +5037,7 @@ const App = () => {
                         </thead>
                         <tbody className="divide-y">
                           {selectedOfflineLogs.length === 0 ? (
-                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={8}>该 SKU 暂无记录</td></tr>
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={9}>该 SKU 暂无记录</td></tr>
                           ) : selectedOfflineLogs.map(log => (
                             <tr key={`selected-${log.id}`} className="hover:bg-slate-50">
                               <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
@@ -4801,6 +5049,7 @@ const App = () => {
                               <td className="px-4 py-3 text-slate-600">
                                 {log.type === 'in' ? '补货入库' : getPurposeLabel(log.purpose)}
                               </td>
+                              <td className="px-4 py-3 text-slate-600 font-mono">{log.batchExpiryDate || '-'}</td>
                               <td className="px-4 py-3 text-right font-black">{Math.round(log.qty).toLocaleString()}</td>
                               <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
                               <td className="px-4 py-3 text-slate-600">{log.customerName ? `${log.customerPlatform || '-'} / ${log.customerName} / ${log.customerIdentity || '-'} / ${log.customerPhone || '-'} / ${log.profileAddress || '-'}` : '-'}</td>
@@ -4901,6 +5150,7 @@ const App = () => {
                               )}
                             </th>
                             <th className="px-4 py-3 text-right">出库数量</th>
+                            <th className="px-4 py-3">效期</th>
                             <th className="px-4 py-3 relative">
                               <div className="flex items-center gap-1">
                                 <span>操作账号</span>
@@ -4955,13 +5205,14 @@ const App = () => {
                         </thead>
                         <tbody className="divide-y">
                           {filteredOutboundSummaryLogs.length === 0 ? (
-                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={canManagePermissions ? 9 : 8}>{Object.values(outLogFilters).some(Boolean) ? '无匹配的出库记录' : '暂无出库汇总记录'}</td></tr>
+                            <tr><td className="px-4 py-8 text-center text-slate-400 italic" colSpan={canManagePermissions ? 10 : 9}>{Object.values(outLogFilters).some(Boolean) ? '无匹配的出库记录' : '暂无出库汇总记录'}</td></tr>
                           ) : filteredOutboundSummaryLogs.map(log => (
                             <tr key={`out-${log.id}`} className="hover:bg-slate-50">
                               <td className="px-4 py-3 text-slate-500 font-mono">{new Date(log.happenedAt).toLocaleString()}</td>
                               <td className="px-4 py-3 font-bold text-slate-700">{log.itemName}</td>
                               <td className="px-4 py-3 text-slate-600">{getPurposeLabel(log.purpose)}</td>
                               <td className="px-4 py-3 text-right font-black text-rose-700">{Math.round(log.qty).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-slate-600 font-mono">{log.batchExpiryDate || '-'}</td>
                               <td className="px-4 py-3 text-slate-600">{log.account || '-'}</td>
                               <td className="px-4 py-3 text-slate-600">{log.customerName ? `${log.customerPlatform || '-'} / ${log.customerName} / ${log.customerIdentity || '-'} / ${log.customerPhone || '-'} / ${log.profileAddress || '-'}` : '-'}</td>
                               <td className="px-4 py-3 text-slate-600 font-mono">{log.trackingNo || '-'}</td>
@@ -5017,6 +5268,10 @@ const App = () => {
                       <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">操作账号</label>
                       <input type="text" value={editingOfflineLog.account || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, account: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">批次效期</label>
+                    <input type="date" value={editingOfflineLog.batchExpiryDate || ''} onChange={e => setEditingOfflineLog(prev => ({ ...prev, batchExpiryDate: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"/>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
