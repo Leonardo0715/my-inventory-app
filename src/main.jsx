@@ -469,7 +469,7 @@ const App = () => {
   const [offlineProfileRemark, setOfflineProfileRemark] = useState('');
   const [offlineEditingProfileId, setOfflineEditingProfileId] = useState('');
   const [offlineCalibrationItemId, setOfflineCalibrationItemId] = useState('');
-  const [offlineCalibrationActual, setOfflineCalibrationActual] = useState('');
+  const [offlineCalibrationBatches, setOfflineCalibrationBatches] = useState([]); // [{expiryDate, sysQty, actualQty}]
   const [offlineCalibrationRemark, setOfflineCalibrationRemark] = useState('');
   const [offlineTxItemId, setOfflineTxItemId] = useState('');
   const [offlineTxType, setOfflineTxType] = useState('in');
@@ -2175,56 +2175,91 @@ const App = () => {
     setOfflineTxNewExpiry('');
   };
 
-  // 库存校准：用户输入实际盘点数量，系统自动计算差值并生成调整记录
+  // 库存校准：按批次盘点实际数量，系统自动计算差值并生成调整记录
   const recordCalibration = () => {
     if (!ensureEditPermission()) return;
     const itemIdNum = Number(offlineCalibrationItemId);
-    const actualStock = Number(offlineCalibrationActual);
     const remark = String(offlineCalibrationRemark || '').trim();
     const account = String(user?.email || '').trim();
     if (!Number.isFinite(itemIdNum)) { setWarning('请选择要校准的品项'); return; }
-    if (!Number.isFinite(actualStock) || actualStock < 0) { setWarning('请输入有效的实际库存数量（≥0）'); return; }
     if (!account) { setWarning('当前未获取到登录账号，请重新登录后再操作'); return; }
     const targetItem = offlineInventoryItems.find(item => item.id === itemIdNum);
     if (!targetItem) { setWarning('线下库存品项不存在'); return; }
-    const currentStock = Number(targetItem.currentStock || 0);
-    const delta = actualStock - currentStock;
-    if (delta === 0) { setWarning('实际库存与系统库存一致，无需校准'); return; }
+    // 检查是否有实际变化
+    const changedBatches = offlineCalibrationBatches.filter(b => {
+      const actual = Number(b.actualQty);
+      return Number.isFinite(actual) && actual >= 0 && actual !== b.sysQty;
+    });
+    if (changedBatches.length === 0) { setWarning('所有批次实际数量与系统一致，无需校准'); return; }
+    // 验证所有填写了的 actualQty 都合法
+    for (const b of offlineCalibrationBatches) {
+      const v = Number(b.actualQty);
+      if (b.actualQty !== '' && (!Number.isFinite(v) || v < 0)) {
+        setWarning(`批次 [${b.expiryDate || '无效期'}] 的实际数量无效`);
+        return;
+      }
+    }
     const now = new Date().toISOString();
-    const txType = delta > 0 ? 'in' : 'out';
-    const absQty = Math.abs(delta);
+    const oldTotal = Number(targetItem.currentStock || 0);
+    // 更新每个批次
+    let newBatches = [...(targetItem.batches || [])];
+    let totalDeltaIn = 0;
+    let totalDeltaOut = 0;
+    const logEntries = [];
+    for (const cb of offlineCalibrationBatches) {
+      const actual = Number(cb.actualQty);
+      if (!Number.isFinite(actual) || actual < 0 || actual === cb.sysQty) continue;
+      const delta = actual - cb.sysQty;
+      if (delta > 0) totalDeltaIn += delta;
+      else totalDeltaOut += Math.abs(delta);
+      // 更新批次
+      const bIdx = newBatches.findIndex(b => b.expiryDate === cb.expiryDate);
+      if (bIdx >= 0) {
+        if (actual > 0) {
+          newBatches[bIdx] = { ...newBatches[bIdx], qty: actual };
+        } else {
+          newBatches.splice(bIdx, 1);
+        }
+      } else if (actual > 0) {
+        newBatches.push({ expiryDate: cb.expiryDate, qty: actual });
+      }
+      logEntries.push({
+        id: Date.now() + logEntries.length,
+        itemId: targetItem.id,
+        itemName: targetItem.name,
+        type: delta > 0 ? 'in' : 'out',
+        purpose: 'calibration',
+        qty: Math.abs(delta),
+        account,
+        customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
+        profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
+        trackingNo: '',
+        batchExpiryDate: cb.expiryDate,
+        remark: remark || `批次校准 [${cb.expiryDate || '无效期'}]：${cb.sysQty} → ${actual}（${delta > 0 ? '+' : ''}${delta}）`,
+        operator: user?.email || '',
+        happenedAt: now,
+      });
+    }
+    newBatches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
+    const newTotal = newBatches.reduce((s, b) => s + b.qty, 0);
     setOfflineInventoryItems(prev => prev.map(item => {
       if (item.id !== itemIdNum) return item;
       const inboundTotal = Number(item.inboundTotal || 0);
       const outboundTotal = Number(item.outboundTotal || 0);
       return {
         ...item,
-        currentStock: actualStock,
-        inboundTotal: delta > 0 ? inboundTotal + absQty : inboundTotal,
-        outboundTotal: delta < 0 ? outboundTotal + absQty : outboundTotal,
+        currentStock: newTotal,
+        batches: newBatches,
+        inboundTotal: inboundTotal + totalDeltaIn,
+        outboundTotal: outboundTotal + totalDeltaOut,
         remark: remark || item.remark,
         updatedAt: now,
       };
     }));
-    setOfflineInventoryLogs(prev => [{
-      id: Date.now(),
-      itemId: targetItem.id,
-      itemName: targetItem.name,
-      type: txType,
-      purpose: 'calibration',
-      qty: absQty,
-      account,
-      customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
-      profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
-      trackingNo: '',
-      batchExpiryDate: '',
-      remark: remark || `库存校准：${currentStock} → ${actualStock}（${delta > 0 ? '+' : ''}${delta}）`,
-      operator: user?.email || '',
-      happenedAt: now,
-    }, ...prev]);
-    setOfflineCalibrationActual('');
+    setOfflineInventoryLogs(prev => [...logEntries, ...prev]);
+    setOfflineCalibrationBatches([]);
     setOfflineCalibrationRemark('');
-    setWarning(`✅ 库存校准完成：${targetItem.name} ${currentStock} → ${actualStock}（${delta > 0 ? '校准入库 +' : '校准出库 '}${delta}）`);
+    setWarning(`✅ 批次校准完成：${targetItem.name}，${changedBatches.length} 个批次已调整（${oldTotal} → ${newTotal}）`);
   };
 
   // 管理员编辑出库记录（同步回退/补偿库存）
@@ -4851,14 +4886,23 @@ const App = () => {
               </div>
 
               <div className="bg-white border border-amber-200 rounded-2xl p-4">
-                <h3 className="text-sm font-black text-amber-800 mb-3">📐 库存校准（盘点）</h3>
+                <h3 className="text-sm font-black text-amber-800 mb-3">📐 库存校准（按批次盘点）</h3>
                 <div className="text-[10px] text-amber-700 font-medium mb-3 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
-                  输入实际盘点数量，系统自动计算差值并生成校准记录。
+                  选择品项后逐批次输入实际盘点数量，系统自动计算差值并按批次生成校准记录。
                 </div>
                 <div className="space-y-3">
                   <select
                     value={offlineCalibrationItemId}
-                    onChange={e => setOfflineCalibrationItemId(e.target.value)}
+                    onChange={e => {
+                      const id = e.target.value;
+                      setOfflineCalibrationItemId(id);
+                      if (id) {
+                        const item = offlineInventoryItems.find(i => i.id === Number(id));
+                        setOfflineCalibrationBatches((item?.batches || []).map(b => ({ expiryDate: b.expiryDate, sysQty: b.qty, actualQty: '' })));
+                      } else {
+                        setOfflineCalibrationBatches([]);
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
                   >
                     <option value="">选择品项</option>
@@ -4866,31 +4910,70 @@ const App = () => {
                       <option key={item.id} value={item.id}>{item.name}（系统库存：{Number(item.currentStock || 0)}）</option>
                     ))}
                   </select>
-                  {offlineCalibrationItemId && (() => {
-                    const item = offlineInventoryItems.find(i => i.id === Number(offlineCalibrationItemId));
-                    const sys = Number(item?.currentStock || 0);
-                    const actual = Number(offlineCalibrationActual);
-                    const delta = Number.isFinite(actual) ? actual - sys : null;
+                  {offlineCalibrationItemId && offlineCalibrationBatches.length > 0 && (
+                    <div className="border border-slate-200 rounded-lg overflow-hidden">
+                      <table className="w-full text-[11px]">
+                        <thead className="bg-slate-100 text-slate-500 uppercase">
+                          <tr>
+                            <th className="px-3 py-1.5 text-left font-black">失效日期</th>
+                            <th className="px-3 py-1.5 text-center font-black">系统数量</th>
+                            <th className="px-3 py-1.5 text-center font-black">实际数量</th>
+                            <th className="px-3 py-1.5 text-center font-black">差异</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {offlineCalibrationBatches.map((b, bIdx) => {
+                            const actual = Number(b.actualQty);
+                            const delta = b.actualQty !== '' && Number.isFinite(actual) ? actual - b.sysQty : null;
+                            return (
+                              <tr key={bIdx} className={delta !== null && delta !== 0 ? (delta > 0 ? 'bg-emerald-50' : 'bg-rose-50') : ''}>
+                                <td className="px-3 py-2 font-bold text-slate-700">{b.expiryDate || '无效期'}</td>
+                                <td className="px-3 py-2 text-center font-black text-slate-600">{b.sysQty}</td>
+                                <td className="px-3 py-2 text-center">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={b.actualQty}
+                                    onChange={e => setOfflineCalibrationBatches(prev => prev.map((bb, i) => i === bIdx ? { ...bb, actualQty: e.target.value } : bb))}
+                                    placeholder={String(b.sysQty)}
+                                    className="w-16 text-center border border-slate-300 rounded px-1 py-0.5 text-xs font-black"
+                                  />
+                                </td>
+                                <td className={`px-3 py-2 text-center font-black ${delta === null || delta === 0 ? 'text-slate-400' : delta > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  {delta === null ? '-' : delta === 0 ? '无差异' : `${delta > 0 ? '+' : ''}${delta}`}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {offlineCalibrationItemId && offlineCalibrationBatches.length === 0 && (
+                    <div className="text-xs text-slate-400 italic p-2">该品项暂无批次数据</div>
+                  )}
+                  {offlineCalibrationItemId && offlineCalibrationBatches.length > 0 && (() => {
+                    const sysTotal = offlineCalibrationBatches.reduce((s, b) => s + b.sysQty, 0);
+                    const filledBatches = offlineCalibrationBatches.filter(b => b.actualQty !== '' && Number.isFinite(Number(b.actualQty)));
+                    const actualTotal = offlineCalibrationBatches.reduce((s, b) => {
+                      const v = Number(b.actualQty);
+                      return s + (Number.isFinite(v) ? v : b.sysQty);
+                    }, 0);
+                    const totalDelta = actualTotal - sysTotal;
                     return (
                       <div className="text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 flex justify-between">
-                        <span>系统库存：<span className="text-indigo-700">{sys}</span></span>
-                        {delta !== null && delta !== 0 && (
-                          <span className={delta > 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                            差值：{delta > 0 ? '+' : ''}{delta}（{delta > 0 ? '校准入库' : '校准出库'}）
+                        <span>系统总数：<span className="text-indigo-700">{sysTotal}</span></span>
+                        <span>盘点总数：<span className="text-indigo-700">{actualTotal}</span></span>
+                        {totalDelta !== 0 ? (
+                          <span className={totalDelta > 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                            总差值：{totalDelta > 0 ? '+' : ''}{totalDelta}
                           </span>
-                        )}
-                        {delta === 0 && <span className="text-slate-400">无差异</span>}
+                        ) : filledBatches.length > 0 ? (
+                          <span className="text-slate-400">无差异</span>
+                        ) : null}
                       </div>
                     );
                   })()}
-                  <input
-                    type="number"
-                    value={offlineCalibrationActual}
-                    onChange={e => setOfflineCalibrationActual(e.target.value)}
-                    placeholder="实际盘点数量"
-                    min="0"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium"
-                  />
                   <textarea
                     value={offlineCalibrationRemark}
                     onChange={e => setOfflineCalibrationRemark(e.target.value)}
@@ -4901,7 +4984,7 @@ const App = () => {
                     onClick={recordCalibration}
                     className="w-full bg-amber-600 text-white py-2.5 rounded-lg font-black text-xs hover:bg-amber-700"
                   >
-                    📐 执行库存校准
+                    📐 执行批次校准
                   </button>
                 </div>
               </div>
