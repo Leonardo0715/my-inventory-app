@@ -4925,19 +4925,19 @@ const App = () => {
                   />
                 </div>
                 <div className="overflow-auto max-h-[320px]">
-                  <table className="w-auto min-w-[520px] text-left text-xs">
+                  <table className="w-full text-left text-xs">
                     <colgroup>
-                      <col style={{ width: '200px' }} />
-                      <col style={{ width: '100px' }} />
-                      <col style={{ width: '80px' }} />
-                      <col style={{ width: '96px' }} />
+                      <col className="w-[40%]" />
+                      <col className="w-[15%]" />
+                      <col className="w-[15%]" />
+                      <col className="w-[30%]" />
                     </colgroup>
                     <thead className="sticky top-0 bg-white border-b text-slate-500 uppercase z-10">
                       <tr>
-                        <th className="px-4 py-3">品项</th>
-                        <th className="px-4 py-3 text-right">现有库存</th>
-                        <th className="px-4 py-3 text-center">批次</th>
-                        <th className="px-4 py-3 text-center">操作</th>
+                        <th className="px-4 py-3 font-black">品项</th>
+                        <th className="px-4 py-3 text-center font-black">现有库存</th>
+                        <th className="px-4 py-3 text-center font-black">批次</th>
+                        <th className="px-4 py-3 text-center font-black">操作</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -4955,30 +4955,30 @@ const App = () => {
                                 setOfflineSelectedItemId(item.id);
                                 setOfflineTxItemId(String(item.id));
                               }}
-                              className={`cursor-pointer hover:bg-slate-50 ${Number(offlineSelectedItemId) === Number(item.id) ? 'bg-indigo-50' : ''}`}
+                              className={`cursor-pointer hover:bg-slate-50 transition-colors ${Number(offlineSelectedItemId) === Number(item.id) ? 'bg-indigo-50' : ''}`}
                             >
                               <td className="px-4 py-3 font-bold text-slate-700">{item.name}</td>
-                              <td className="px-4 py-3 text-right font-black text-indigo-700">{Math.round(item.currentStock).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-center font-black text-indigo-700 text-sm">{Math.round(item.currentStock).toLocaleString()}</td>
                               <td className="px-4 py-3 text-center">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); setOfflineExpandedItemId(isExpanded ? null : item.id); }}
-                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-bold ${isExpanded ? 'bg-indigo-100 border-indigo-300 text-indigo-700' : 'border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+                                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors ${isExpanded ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                                 >
                                   {batches.length}批{expiredCount > 0 && <span className="text-rose-600">({expiredCount}过期)</span>}
-                                  <span className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▾</span>
+                                  <span className={`transition-transform text-[8px] ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
                                 </button>
                               </td>
-                              <td className="px-4 py-3 text-center">
-                                <div className="flex items-center justify-center gap-1">
+                              <td className="px-4 py-3">
+                                <div className="flex items-center justify-center gap-2">
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setEditingBatchItem({ id: item.id, name: item.name, totalStock: item.currentStock, batches: (item.batches || []).map(b => ({ ...b })) });
                                     }}
                                     disabled={!canEditData}
-                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-indigo-300 text-indigo-700 hover:bg-indigo-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${canEditData ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'bg-slate-50 text-slate-400 cursor-not-allowed'}`}
                                   >
-                                    ✏️ 编辑
+                                    编辑批次
                                   </button>
                                   <button
                                     onClick={(e) => {
@@ -4986,23 +4986,23 @@ const App = () => {
                                       deleteOfflineInventoryItem(item.id);
                                     }}
                                     disabled={!canEditData}
-                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-bold ${canEditData ? 'border-rose-300 text-rose-700 hover:bg-rose-50' : 'border-slate-200 text-slate-400 cursor-not-allowed'}`}
+                                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${canEditData ? 'bg-rose-50 text-rose-700 hover:bg-rose-100' : 'bg-slate-50 text-slate-400 cursor-not-allowed'}`}
                                   >
-                                    <Trash2 size={12} /> 删除
+                                    <Trash2 size={11} /> 删除
                                   </button>
                                 </div>
                               </td>
                             </tr>
                             {isExpanded && batches.length > 0 && (
                               <tr>
-                                <td colSpan={4} className="px-4 py-2 bg-slate-50/80">
+                                <td colSpan={4} className="px-6 py-2 bg-slate-50/60">
                                   <div className="border border-slate-200 rounded-lg overflow-hidden">
                                     <table className="w-full text-[11px]">
-                                      <thead className="bg-slate-100 text-slate-500 uppercase">
+                                      <thead className="bg-slate-100/80 text-slate-500 uppercase">
                                         <tr>
-                                          <th className="px-3 py-1.5 text-left">失效日期</th>
-                                          <th className="px-3 py-1.5 text-right">数量</th>
-                                          <th className="px-3 py-1.5 text-center">状态</th>
+                                          <th className="px-3 py-1.5 text-left font-black">失效日期</th>
+                                          <th className="px-3 py-1.5 text-right font-black">数量</th>
+                                          <th className="px-3 py-1.5 text-center font-black">状态</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-100">
@@ -5013,7 +5013,7 @@ const App = () => {
                                           const sixMonthStr = sixMonthLater.toISOString().split('T')[0];
                                           const isNearExpiry = b.expiryDate && !isExpiredBatch && b.expiryDate <= sixMonthStr;
                                           return (
-                                            <tr key={bIdx} className={isExpiredBatch ? 'bg-rose-50' : isNearExpiry ? 'bg-amber-50' : ''}>
+                                            <tr key={bIdx} className={isExpiredBatch ? 'bg-rose-50' : isNearExpiry ? 'bg-amber-50' : 'bg-white'}>
                                               <td className={`px-3 py-1.5 font-bold ${isExpiredBatch ? 'text-rose-700' : isNearExpiry ? 'text-amber-700' : 'text-slate-700'}`}>
                                                 {b.expiryDate || '无效期'}
                                               </td>
