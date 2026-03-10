@@ -227,7 +227,7 @@ function sanitizeOfflineInventoryLogs(logs) {
       const itemId = Number.isFinite(Number(log.itemId)) ? Number(log.itemId) : null;
       const itemName = String(log.itemName ?? '');
       const type = log.type === 'out' ? 'out' : 'in';
-      const purpose = log.purpose === 'restock' ? 'restock' : (PURPOSE_KEYS.includes(log.purpose) ? log.purpose : 'sample');
+      const purpose = (log.purpose === 'restock' || log.purpose === 'calibration') ? log.purpose : (PURPOSE_KEYS.includes(log.purpose) ? log.purpose : 'sample');
       const qty = Math.max(0, Number(log.qty ?? 0) || 0);
       const account = String(log.account ?? '');
       const customerId = Number.isFinite(Number(log.customerId)) ? Number(log.customerId) : null;
@@ -1595,13 +1595,33 @@ const App = () => {
       const beidNum = Number(beid);
       if (!Number.isFinite(beidNum) || !Array.isArray(newBatches)) return;
       const now = new Date().toISOString();
+      const targetItem = offlineInventoryItems.find(i => i.id === beidNum);
+      const oldBatchDesc = (targetItem?.batches || []).map(b => `${b.expiryDate || '无效期'}×${b.qty}`).join(', ');
+      const cleanBatches = newBatches.filter(b => b.qty > 0).map(b => ({ expiryDate: String(b.expiryDate || ''), qty: Number(b.qty) }));
+      cleanBatches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
+      const newTotal = cleanBatches.reduce((s, b) => s + b.qty, 0);
+      const newBatchDesc = cleanBatches.map(b => `${b.expiryDate || '无效期'}×${b.qty}`).join(', ');
       setOfflineInventoryItems(prev => prev.map(item => {
         if (item.id !== beidNum) return item;
-        const cleanBatches = newBatches.filter(b => b.qty > 0).map(b => ({ expiryDate: String(b.expiryDate || ''), qty: Number(b.qty) }));
-        cleanBatches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
-        const newTotal = cleanBatches.reduce((s, b) => s + b.qty, 0);
         return { ...item, batches: cleanBatches, currentStock: newTotal, updatedAt: now };
       }));
+      // 生成批次编辑日志记录
+      setOfflineInventoryLogs(prev => [{
+        id: Date.now(),
+        itemId: beidNum,
+        itemName: targetItem?.name || '',
+        type: 'in',
+        purpose: 'calibration',
+        qty: 0,
+        account: bEditAccount || user?.email || '',
+        customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
+        profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
+        trackingNo: '',
+        batchExpiryDate: '',
+        remark: `批次重新分配：[${oldBatchDesc}] → [${newBatchDesc}]`,
+        operator: user?.email || '',
+        happenedAt: now,
+      }, ...prev]);
       return;
     }
     if (approval.actionType === 'expired_destroy') {
@@ -1744,7 +1764,7 @@ const App = () => {
   const addOfflineInventoryItem = () => {
     if (!ensureEditPermission()) return;
     const name = String(offlineItemName || '').trim();
-    const initialStock = Math.max(0, Number(offlineItemStock || 0) || 0);
+    const enteredStock = Math.max(0, Number(offlineItemStock || 0) || 0);
     if (!name) {
       setWarning('请输入线下库存品项名称');
       return;
@@ -1757,34 +1777,23 @@ const App = () => {
     const newItem = {
       id: Date.now(),
       name,
-      currentStock: initialStock,
-      batches: initialStock > 0 ? [{ expiryDate: '', qty: initialStock }] : [],
-      inboundTotal: initialStock,
+      currentStock: 0,
+      batches: [],
+      inboundTotal: 0,
       outboundTotal: 0,
       lastOutboundAccount: '',
       remark: String(offlineItemRemark || '').trim(),
       updatedAt: now,
     };
     setOfflineInventoryItems(prev => [newItem, ...prev]);
-    if (initialStock > 0) {
-      setOfflineInventoryLogs(prev => [{
-        id: Date.now() + 1,
-        itemId: newItem.id,
-        itemName: newItem.name,
-        type: 'in',
-        qty: initialStock,
-        account: '系统初始化',
-        batchExpiryDate: '',
-        remark: '初始化库存',
-        operator: user?.email || '',
-        happenedAt: now,
-      }, ...prev]);
-    }
     setOfflineItemName('');
     setOfflineItemStock('');
     setOfflineItemRemark('');
     if (!offlineTxItemId) setOfflineTxItemId(String(newItem.id));
     if (!offlineSelectedItemId) setOfflineSelectedItemId(newItem.id);
+    if (enteredStock > 0) {
+      setWarning(`✅ 品项「${name}」已创建。初始库存请通过入库功能录入（需选择效期批次）`);
+    }
   };
 
   const addOfflineRecipientCustomer = () => {
@@ -2277,10 +2286,28 @@ const App = () => {
         const currentStock = Number(item.currentStock || 0);
         const outboundTotal = Number(item.outboundTotal || 0);
         const inboundTotal = Number(item.inboundTotal || 0);
+        let batches = [...(item.batches || [])];
+        const batchKey = oldLog.batchExpiryDate ?? '';
+        const bIdx = batches.findIndex(b => b.expiryDate === batchKey);
         if (oldLog.type === 'out') {
-          return { ...item, currentStock: Math.max(0, currentStock - qtyDelta), outboundTotal: Math.max(0, outboundTotal + qtyDelta) };
+          // 出库数量增加 → 批次库存减少；出库数量减少 → 批次库存增加
+          if (bIdx >= 0) {
+            const newBatchQty = Math.max(0, batches[bIdx].qty - qtyDelta);
+            if (newBatchQty > 0) { batches[bIdx] = { ...batches[bIdx], qty: newBatchQty }; }
+            else { batches.splice(bIdx, 1); }
+          }
+          return { ...item, currentStock: Math.max(0, currentStock - qtyDelta), batches, outboundTotal: Math.max(0, outboundTotal + qtyDelta) };
         }
-        return { ...item, currentStock: Math.max(0, currentStock + qtyDelta), inboundTotal: Math.max(0, inboundTotal + qtyDelta) };
+        // 入库数量变化 → 批次库存同步调整
+        if (bIdx >= 0) {
+          const newBatchQty = Math.max(0, batches[bIdx].qty + qtyDelta);
+          if (newBatchQty > 0) { batches[bIdx] = { ...batches[bIdx], qty: newBatchQty }; }
+          else { batches.splice(bIdx, 1); }
+        } else if (qtyDelta > 0) {
+          batches.push({ expiryDate: batchKey, qty: qtyDelta });
+          batches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
+        }
+        return { ...item, currentStock: Math.max(0, currentStock + qtyDelta), batches, inboundTotal: Math.max(0, inboundTotal + qtyDelta) };
       }));
     }
     setOfflineInventoryLogs(prev => prev.map(log => {
@@ -2302,10 +2329,26 @@ const App = () => {
           const currentStock = Number(item.currentStock || 0);
           const outboundTotal = Number(item.outboundTotal || 0);
           const inboundTotal = Number(item.inboundTotal || 0);
+          let batches = [...(item.batches || [])];
+          const batchKey = targetLog.batchExpiryDate ?? '';
+          const bIdx = batches.findIndex(b => b.expiryDate === batchKey);
           if (targetLog.type === 'out') {
-            return { ...item, currentStock: currentStock + qty, outboundTotal: Math.max(0, outboundTotal - qty) };
+            // 删除出库记录 → 批次库存回加
+            if (bIdx >= 0) {
+              batches[bIdx] = { ...batches[bIdx], qty: batches[bIdx].qty + qty };
+            } else {
+              batches.push({ expiryDate: batchKey, qty });
+              batches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
+            }
+            return { ...item, currentStock: currentStock + qty, batches, outboundTotal: Math.max(0, outboundTotal - qty) };
           }
-          return { ...item, currentStock: Math.max(0, currentStock - qty), inboundTotal: Math.max(0, inboundTotal - qty) };
+          // 删除入库记录 → 批次库存回扣
+          if (bIdx >= 0) {
+            const newBatchQty = Math.max(0, batches[bIdx].qty - qty);
+            if (newBatchQty > 0) { batches[bIdx] = { ...batches[bIdx], qty: newBatchQty }; }
+            else { batches.splice(bIdx, 1); }
+          }
+          return { ...item, currentStock: Math.max(0, currentStock - qty), batches, inboundTotal: Math.max(0, inboundTotal - qty) };
         }));
       }
     }
@@ -5162,7 +5205,7 @@ const App = () => {
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-slate-600">
-                                {log.type === 'in' ? '补货入库' : getPurposeLabel(log.purpose)}
+                                {log.purpose === 'calibration' ? '库存校准' : (log.type === 'in' ? '补货入库' : getPurposeLabel(log.purpose))}
                               </td>
                               <td className="px-4 py-3 text-slate-600 font-mono">{log.batchExpiryDate || '-'}</td>
                               <td className="px-4 py-3 text-right font-black">{Math.round(log.qty).toLocaleString()}</td>
