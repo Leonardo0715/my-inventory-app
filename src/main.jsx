@@ -1,9 +1,10 @@
 ﻿import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
+import * as XLSX from 'xlsx';
 import { 
   TrendingDown, Clock, Plus, AlertTriangle, BarChart3, 
   Check, X, Layout, List, RefreshCw, Save, Edit2,
-  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, Menu, ChevronLeft, Home, Compass
+  Ship, Plane, Factory, Calendar, AlertCircle, ArrowRight, Train, Trash2, Settings, LogOut, Lock, Menu, ChevronLeft, Home, Compass, BookOpen, Upload, Image
 } from 'lucide-react';
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -50,6 +51,7 @@ const ALL_FEATURES = [
   { key: 'dashboard', label: '全景大屏' },
   { key: 'po', label: '采购单管理' },
   { key: 'sku', label: 'SKU 管理' },
+  { key: 'faq', label: '产品百科' },
 ];
 const ALL_FEATURE_KEYS = ALL_FEATURES.map(f => f.key);
 
@@ -248,6 +250,36 @@ function sanitizeOfflineInventoryLogs(logs) {
       return { id, itemId, itemName, type, purpose, qty, account, customerId, customerName, customerPlatform, customerIdentity, customerPhone, profileId, profileLabel, profileReceiver, profilePhone, profileAddress, trackingNo, batchExpiryDate, remark, operator, happenedAt };
     })
     .filter(log => log.itemName && log.qty > 0);
+}
+
+function sanitizeProductFaq(items) {
+  const safeArr = Array.isArray(items) ? items : [];
+  return safeArr
+    .filter(Boolean)
+    .map((item, idx) => {
+      const id = Number.isFinite(Number(item.id)) ? Number(item.id) : Date.now() + idx;
+      const artNo = String(item.artNo ?? '').trim();
+      const rawEans = Array.isArray(item.eans) ? item.eans : (item.ean ? [item.ean] : []);
+      const eans = rawEans.map(e => String(e ?? '').trim()).filter(Boolean);
+      const name = String(item.name ?? '').trim();
+      const nameDutch = String(item.nameDutch ?? '').trim();
+      const spec = String(item.spec ?? '').trim();
+      const dosageForm = String(item.dosageForm ?? '').trim();
+      const formula = String(item.formula ?? '').trim();
+      const usage = String(item.usage ?? '').trim();
+      const intro = String(item.intro ?? '').trim();
+      const efficacy = String(item.efficacy ?? '').trim();
+      const ageRange = String(item.ageRange ?? '').trim();
+      const precautions = String(item.precautions ?? '').trim();
+      const allergens = String(item.allergens ?? '').trim();
+      const images = Array.isArray(item.images) ? item.images.filter(Boolean).map(img => ({
+        name: String(img.name ?? '').trim(),
+        dataUrl: String(img.dataUrl ?? ''),
+      })).filter(img => img.dataUrl) : [];
+      const updatedAt = String(item.updatedAt ?? '');
+      return { id, artNo, eans, name, nameDutch, spec, dosageForm, formula, usage, intro, efficacy, ageRange, precautions, allergens, images, updatedAt };
+    })
+    .filter(item => item.name.length > 0);
 }
 
 function sanitizeRecipientDirectory(customers) {
@@ -501,6 +533,10 @@ const App = () => {
   const [poViewMode, setPoViewMode] = useState('card'); // 'card' 或 'table'
   const [expandedPoGroups, setExpandedPoGroups] = useState({ pending: true, completed: false }); // 按状态分组的展开/收起
   const [editingOfflineLog, setEditingOfflineLog] = useState(null); // 正在编辑的出库记录
+  const [productFaq, setProductFaq] = useState([]); // 产品百科数据
+  const [faqEditingItem, setFaqEditingItem] = useState(null); // 正在编辑的产品百科条目
+  const [faqSearchQuery, setFaqSearchQuery] = useState(''); // 产品百科搜索
+  const [faqExpandedId, setFaqExpandedId] = useState(null); // 展开的产品百科卡片
 
   // 设置状态 - 运输方式（可扩展）
   const [transportModes, setTransportModes] = useState([
@@ -555,6 +591,7 @@ const App = () => {
   // 🛡️ 安全备份（仅在数据量健康时更新的"保险箱"备份）
   const lastSafeBackupCountRef = useRef(0);
   const [lastSafeBackupInfo, setLastSafeBackupInfo] = useState(null);
+  const hasManagedData = skus.length > 0 || offlineInventoryItems.length > 0 || offlineInventoryLogs.length > 0 || offlineRecipientDirectory.length > 0 || deleteApprovals.length > 0 || productFaq.length > 0;
 
   const transportOptions = transportModes.map(mode => {
     const iconMap = { sea: Ship, air: Plane, rail: Train };
@@ -725,7 +762,7 @@ const App = () => {
   // 🔄 自动备份：将当前数据写入 Firestore 独立备份文档
   const saveBackupToCloud = async (trigger = 'manual') => {
     if (!db || !user) { console.warn('⚠️ 备份跳过：未连接云端'); return false; }
-    if (skus.length === 0) { console.warn('⚠️ 备份跳过：数据为空'); return false; }
+    if (!hasManagedData) { console.warn('⚠️ 备份跳过：数据为空'); return false; }
     try {
       const backupDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup');
 
@@ -769,6 +806,7 @@ const App = () => {
         offlineInventoryLogs: clean(offlineInventoryLogs),
         offlineRecipientDirectory: clean(offlineRecipientDirectory),
         deleteApprovals: clean(deleteApprovals),
+        productFaq: clean(productFaq),
         warningDays,
         defaultSettings,
         transportModes,
@@ -780,12 +818,13 @@ const App = () => {
           skuCount: skus.length,
           offlineItemCount: offlineInventoryItems.length,
           logCount: offlineInventoryLogs.length,
+          faqCount: productFaq.length,
           approvalCount: deleteApprovals.length,
         },
       };
       await setDoc(backupDocRef, backupPayload);
       lastBackupSkuCountRef.current = skus.length;
-      const info = `${new Date().toLocaleString('zh-CN')} (${trigger === 'auto' ? '自动' : trigger === 'login' ? '上线' : trigger === 'logout' ? '下线' : '手动'}) by ${user.email}`;
+      const info = `${new Date().toLocaleString('zh-CN')} (${trigger === 'auto' ? '自动' : trigger === 'login' ? '上线' : trigger === 'logout' ? '下线' : '手动'}) by ${user.email} | SKU: ${skus.length} | FAQ: ${productFaq.length}`;
       setLastBackupInfo(info);
       console.log('💾 备份成功:', info, '| SKU:', skus.length, '| 线下品项:', offlineInventoryItems.length, '| 日志:', offlineInventoryLogs.length);
 
@@ -799,7 +838,7 @@ const App = () => {
             const safeMeta = existingSafe.data()?._backup_meta;
             lastSafeBackupCountRef.current = safeMeta?.skuCount || 0;
             const safeTs = safeMeta?.timestamp || '未知';
-            setLastSafeBackupInfo(`${safeTs} | SKU: ${lastSafeBackupCountRef.current}`);
+            setLastSafeBackupInfo(`${safeTs} | SKU: ${lastSafeBackupCountRef.current} | FAQ: ${safeMeta?.faqCount || 0}`);
             console.log('🛡️ 安全备份基准初始化:', lastSafeBackupCountRef.current, 'SKUs');
           }
         } catch (e) { console.warn('⚠️ 读取安全备份基准失败:', e.message); }
@@ -811,7 +850,7 @@ const App = () => {
           const safePayload = { ...backupPayload, _backup_meta: { ...backupPayload._backup_meta, type: 'safe' } };
           await setDoc(backupSafeDocRef, safePayload);
           lastSafeBackupCountRef.current = skus.length;
-          const safeInfo = `${new Date().toLocaleString('zh-CN')} | SKU: ${skus.length}`;
+          const safeInfo = `${new Date().toLocaleString('zh-CN')} | SKU: ${skus.length} | FAQ: ${productFaq.length}`;
           setLastSafeBackupInfo(safeInfo);
           console.log('🛡️ 安全备份已更新:', safeInfo);
         } catch (safeErr) {
@@ -837,15 +876,15 @@ const App = () => {
       const backupSafeDocRef = doc(db, 'inventory_apps', appId, 'shared', 'backup_safe');
       // 并行读取两份备份
       const [backupSnap, safeSnap] = await Promise.all([getDoc(backupDocRef), getDoc(backupSafeDocRef)]);
-      const hasBackup = backupSnap.exists() && ((backupSnap.data()?.items?.length || 0) > 0);
-      const hasSafe = safeSnap.exists() && ((safeSnap.data()?.items?.length || 0) > 0);
+      const hasBackup = backupSnap.exists() && (((backupSnap.data()?.items?.length || 0) > 0) || ((backupSnap.data()?.offlineInventoryItems?.length || 0) > 0) || ((backupSnap.data()?.offlineInventoryLogs?.length || 0) > 0) || ((backupSnap.data()?.offlineRecipientDirectory?.length || 0) > 0) || ((backupSnap.data()?.deleteApprovals?.length || 0) > 0) || ((backupSnap.data()?.productFaq?.length || 0) > 0));
+      const hasSafe = safeSnap.exists() && (((safeSnap.data()?.items?.length || 0) > 0) || ((safeSnap.data()?.offlineInventoryItems?.length || 0) > 0) || ((safeSnap.data()?.offlineInventoryLogs?.length || 0) > 0) || ((safeSnap.data()?.offlineRecipientDirectory?.length || 0) > 0) || ((safeSnap.data()?.deleteApprovals?.length || 0) > 0) || ((safeSnap.data()?.productFaq?.length || 0) > 0));
 
       if (!hasBackup && !hasSafe) {
         window.alert('❌ 云端没有找到任何备份数据');
         return;
       }
 
-      const fmtMeta = (meta) => `📅 ${meta?.timestamp || '未知'}  👤 ${meta?.userEmail || '未知'}\n📊 SKU: ${meta?.skuCount || '?'}  线下: ${meta?.offlineItemCount || '?'}  日志: ${meta?.logCount || '?'}`;
+      const fmtMeta = (meta) => `📅 ${meta?.timestamp || '未知'}  👤 ${meta?.userEmail || '未知'}\n📊 SKU: ${meta?.skuCount || '?'}  线下: ${meta?.offlineItemCount || '?'}  日志: ${meta?.logCount || '?'}  FAQ: ${meta?.faqCount || '?'}`;
 
       let chosenData;
       if (source === 'safe') {
@@ -884,6 +923,7 @@ const App = () => {
         offlineInventoryLogs: chosenData.offlineInventoryLogs || [],
         offlineRecipientDirectory: chosenData.offlineRecipientDirectory || [],
         deleteApprovals: chosenData.deleteApprovals || [],
+        productFaq: chosenData.productFaq || [],
         warningDays: chosenData.warningDays,
         defaultSettings: chosenData.defaultSettings,
         transportModes: chosenData.transportModes,
@@ -907,6 +947,7 @@ const App = () => {
       setOfflineInventoryLogs([]);
       setOfflineRecipientDirectory([]);
       setDeleteApprovals([]);
+      setProductFaq([]);
       setIsInitialLoadDone(false);
       cloudDataLoadedRef.current = false;
       hasPendingChangesRef.current = false;
@@ -952,8 +993,14 @@ const App = () => {
 
       // 兼容两种格式：localStorage 格式 (skus) 和 Firestore 格式 (items)
       const rawSkus = data.skus || data.items || [];
-      if (!Array.isArray(rawSkus) || rawSkus.length === 0) {
-        window.alert('❌ 备份数据无效：找不到 skus/items 数组，或数组为空。\n\n检测到的顶级字段: ' + Object.keys(data).join(', '));
+      const hasAnyPayload = (Array.isArray(rawSkus) && rawSkus.length > 0)
+        || ((data.offlineInventoryItems || []).length > 0)
+        || ((data.offlineInventoryLogs || []).length > 0)
+        || ((data.offlineRecipientDirectory || []).length > 0)
+        || ((data.deleteApprovals || []).length > 0)
+        || ((data.productFaq || []).length > 0);
+      if (!hasAnyPayload) {
+        window.alert('❌ 备份数据无效：未找到可恢复的数据内容。\n\n检测到的顶级字段: ' + Object.keys(data).join(', '));
         isRestoringRef.current = false;
         return;
       }
@@ -966,6 +1013,7 @@ const App = () => {
       const restoredOfflineLogs = sanitizeOfflineInventoryLogs(data.offlineInventoryLogs || []);
       const restoredRecipientDir = sanitizeRecipientDirectory(data.offlineRecipientDirectory || []);
       const restoredApprovals = sanitizeDeleteApprovals(data.deleteApprovals || []);
+      const restoredProductFaq = sanitizeProductFaq(data.productFaq || []);
 
       console.log('📋 清洗完毕:', restoredSkus.length, 'SKU,', restoredOfflineItems.length, '线下品项,', restoredOfflineLogs.length, '日志,', restoredApprovals.length, '审批');
 
@@ -993,6 +1041,7 @@ const App = () => {
         offlineInventoryLogs: clean(restoredOfflineLogs),
         offlineRecipientDirectory: clean(restoredRecipientDir),
         deleteApprovals: clean(restoredApprovals),
+        productFaq: clean(restoredProductFaq),
         warningDays: data.warningDays || warningDays,
         defaultSettings: data.defaultSettings || defaultSettings,
         transportModes: data.transportModes || transportModes,
@@ -1009,6 +1058,7 @@ const App = () => {
         offlineInventoryLogs: sanitizeOfflineInventoryLogs(payload.offlineInventoryLogs),
         offlineRecipientDirectory: sanitizeRecipientDirectory(payload.offlineRecipientDirectory),
         deleteApprovals: sanitizeDeleteApprovals(payload.deleteApprovals),
+        productFaq: sanitizeProductFaq(payload.productFaq),
       });
       lastRemoteItemsJSONRef.current = snapshotJSON;
 
@@ -1022,6 +1072,7 @@ const App = () => {
       setOfflineInventoryLogs(restoredOfflineLogs);
       setOfflineRecipientDirectory(restoredRecipientDir);
       setDeleteApprovals(restoredApprovals);
+      setProductFaq(restoredProductFaq);
       if (data.warningDays) setWarningDays(data.warningDays);
       if (data.defaultSettings) setDefaultSettings(migrateDefaultSettings(data.defaultSettings));
       if (data.transportModes) setTransportModes(data.transportModes);
@@ -1080,6 +1131,7 @@ const App = () => {
       if (Array.isArray(local.offlineInventoryLogs)) setOfflineInventoryLogs(sanitizeOfflineInventoryLogs(local.offlineInventoryLogs));
       if (Array.isArray(local.offlineRecipientDirectory)) setOfflineRecipientDirectory(sanitizeRecipientDirectory(local.offlineRecipientDirectory));
       if (Array.isArray(local.deleteApprovals)) setDeleteApprovals(sanitizeDeleteApprovals(local.deleteApprovals));
+      if (Array.isArray(local.productFaq)) setProductFaq(sanitizeProductFaq(local.productFaq));
       console.log('✅ 从本地恢复成功');
     } else {
       const initialData = sanitizeSkus(DEFAULT_DATA);
@@ -1140,8 +1192,9 @@ const App = () => {
                       const bOfflineLogs = sanitizeOfflineInventoryLogs(bd.offlineInventoryLogs || []);
                       const bRecipientDir = sanitizeRecipientDirectory(bd.offlineRecipientDirectory || []);
                       const bApprovals = sanitizeDeleteApprovals(bd.deleteApprovals || []);
+                      const bProductFaq = sanitizeProductFaq(bd.productFaq || []);
                       const clean = (o) => { if (Array.isArray(o)) return o.map(clean); if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).filter(([,v])=>v!==undefined).map(([k,v])=>[k,clean(v)])); return o; };
-                      await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
+                      await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), productFaq: clean(bProductFaq), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
                       setWarning('⚠️ 云端数据异常清空，已从' + label + '自动恢复（' + bItems.length + ' 个SKU）');
                       // onSnapshot 会再次触发并加载恢复后的数据
                       return true;
@@ -1163,12 +1216,14 @@ const App = () => {
           const remoteOfflineLogs = sanitizeOfflineInventoryLogs(docSnap.data().offlineInventoryLogs || []);
           const remoteRecipientDirectory = sanitizeRecipientDirectory(docSnap.data().offlineRecipientDirectory || []);
           const remoteDeleteApprovals = sanitizeDeleteApprovals(docSnap.data().deleteApprovals || []);
+          const remoteProductFaq = sanitizeProductFaq(docSnap.data().productFaq || []);
           const remoteJSON = JSON.stringify({
             items: remoteData,
             offlineInventoryItems: remoteOfflineItems,
             offlineInventoryLogs: remoteOfflineLogs,
             offlineRecipientDirectory: remoteRecipientDirectory,
             deleteApprovals: remoteDeleteApprovals,
+            productFaq: remoteProductFaq,
           });
           
           // 防竞态：如果本地有待发送的更改，不要用远程数据覆盖
@@ -1180,6 +1235,7 @@ const App = () => {
               setOfflineInventoryLogs(remoteOfflineLogs);
               setOfflineRecipientDirectory(remoteRecipientDirectory);
               setDeleteApprovals(remoteDeleteApprovals);
+              setProductFaq(remoteProductFaq);
               lastRemoteItemsJSONRef.current = remoteJSON;
               console.log('📥 从云端拉取新数据');
             }
@@ -1241,19 +1297,21 @@ const App = () => {
                     const bOfflineLogs = sanitizeOfflineInventoryLogs(bd.offlineInventoryLogs || []);
                     const bRecipientDir = sanitizeRecipientDirectory(bd.offlineRecipientDirectory || []);
                     const bApprovals = sanitizeDeleteApprovals(bd.deleteApprovals || []);
+                    const bProductFaq = sanitizeProductFaq(bd.productFaq || []);
                     setSkus(bItems);
                     setOfflineInventoryItems(bOfflineItems);
                     setOfflineInventoryLogs(bOfflineLogs);
                     setOfflineRecipientDirectory(bRecipientDir);
                     setDeleteApprovals(bApprovals);
+                    setProductFaq(bProductFaq);
                     setSelectedSkuId(bItems[0]?.id ?? 1);
                     if (bd.warningDays) setWarningDays(bd.warningDays);
                     if (bd.defaultSettings) setDefaultSettings(migrateDefaultSettings(bd.defaultSettings));
                     if (bd.transportModes) setTransportModes(bd.transportModes);
                     if (bd.userRoles) setUserRoles(bd.userRoles);
                     const clean = (o) => { if (Array.isArray(o)) return o.map(clean); if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).filter(([,v])=>v!==undefined).map(([k,v])=>[k,clean(v)])); return o; };
-                    await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
-                    lastRemoteItemsJSONRef.current = JSON.stringify({ items: bItems, offlineInventoryItems: bOfflineItems, offlineInventoryLogs: bOfflineLogs, offlineRecipientDirectory: bRecipientDir, deleteApprovals: bApprovals });
+                    await setDoc(docRef, { items: clean(bItems), offlineInventoryItems: clean(bOfflineItems), offlineInventoryLogs: clean(bOfflineLogs), offlineRecipientDirectory: clean(bRecipientDir), deleteApprovals: clean(bApprovals), productFaq: clean(bProductFaq), warningDays: bd.warningDays || warningDays, defaultSettings: bd.defaultSettings || defaultSettings, transportModes: bd.transportModes || transportModes, userRoles: bd.userRoles || userRoles, lastUpdated: new Date().toISOString() }, { merge: true });
+                    lastRemoteItemsJSONRef.current = JSON.stringify({ items: bItems, offlineInventoryItems: bOfflineItems, offlineInventoryLogs: bOfflineLogs, offlineRecipientDirectory: bRecipientDir, deleteApprovals: bApprovals, productFaq: bProductFaq });
                     cloudDataLoadedRef.current = true;
                     remoteSkuCountRef.current = bItems.length;
                     console.log('✅ 从云端' + label + '自动恢复成功！SKU:', bItems.length);
@@ -1317,17 +1375,17 @@ const App = () => {
 
   // --- 4.1 本地兜底自动存档（始终开启） ---
   useEffect(() => {
-    if (skus.length === 0) return;
+    if (!hasManagedData) return;
     const timer = setTimeout(() => {
-      saveLocalMemory(localKey, { skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, savedAt: Date.now() });
+      saveLocalMemory(localKey, { skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, productFaq, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, savedAt: Date.now() });
     }, 300);
     return () => clearTimeout(timer);
-  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, localKey]);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, productFaq, selectedSkuId, viewMode, warningDays, defaultSettings, transportModes, userRoles, localKey, hasManagedData]);
 
   // --- 4.1.1 云端自动备份（数据变化时每30秒自动备份一次） ---
   const lastBackupJSONRef = useRef('');
   useEffect(() => {
-    if (!db || !user || !cloudDataLoadedRef.current || skus.length === 0) return;
+    if (!db || !user || !cloudDataLoadedRef.current || !hasManagedData) return;
     if (isRestoringRef.current) return;
     // 🔒 防空：如果已知云端有大量数据，但当前 state 数据骤降，不触发自动备份
     if (remoteSkuCountRef.current > 5 && skus.length < remoteSkuCountRef.current * 0.5) {
@@ -1341,6 +1399,7 @@ const App = () => {
       offlineInventoryLogs,
       offlineRecipientDirectory,
       deleteApprovals,
+      productFaq,
       warningDays,
       defaultSettings,
       transportModes,
@@ -1352,7 +1411,7 @@ const App = () => {
       saveBackupToCloud('auto');
     }, 30000); // 30秒防抖，避免频繁写入
     return () => clearTimeout(timer);
-  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, warningDays, defaultSettings, transportModes, userRoles, db, user]);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, productFaq, warningDays, defaultSettings, transportModes, userRoles, db, user, hasManagedData]);
 
   // --- 4.2 云端自动存档（多人共享） ---
   // 清理对象中的 undefined 值（Firestore 不支持 undefined）
@@ -1372,7 +1431,7 @@ const App = () => {
   useEffect(() => {
     if (!db || !user) return;
     // 🔒 防丢保护：必须完成初始读取、成功接收过云端数据、且数据不为空才允许写回
-    if (!isInitialLoadDone || skus.length === 0) return;
+    if (!isInitialLoadDone || !hasManagedData) return;
     if (!cloudDataLoadedRef.current) {
       console.log('⏸️ 尚未成功接收云端数据，跳过云端写入（防止空数据覆盖）');
       return;
@@ -1389,7 +1448,7 @@ const App = () => {
     }
 
     const docRef = doc(db, 'inventory_apps', appId, 'shared', 'main');
-    const localJSON = JSON.stringify({ items: skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals });
+    const localJSON = JSON.stringify({ items: skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, productFaq });
     if (localJSON === lastRemoteItemsJSONRef.current) {
       hasPendingChangesRef.current = false;
       return;
@@ -1405,7 +1464,8 @@ const App = () => {
         const cleanedOfflineLogs = cleanUndefinedValues(offlineInventoryLogs);
         const cleanedRecipientDirectory = cleanUndefinedValues(offlineRecipientDirectory);
         const cleanedDeleteApprovals = cleanUndefinedValues(deleteApprovals);
-        await setDoc(docRef, { items: cleanedSkus, offlineInventoryItems: cleanedOfflineItems, offlineInventoryLogs: cleanedOfflineLogs, offlineRecipientDirectory: cleanedRecipientDirectory, deleteApprovals: cleanedDeleteApprovals, lastUpdated: new Date().toISOString() }, { merge: true });
+        const cleanedProductFaq = cleanUndefinedValues(productFaq);
+        await setDoc(docRef, { items: cleanedSkus, offlineInventoryItems: cleanedOfflineItems, offlineInventoryLogs: cleanedOfflineLogs, offlineRecipientDirectory: cleanedRecipientDirectory, deleteApprovals: cleanedDeleteApprovals, productFaq: cleanedProductFaq, lastUpdated: new Date().toISOString() }, { merge: true });
         // 使用与 onSnapshot 一致的方式生成 JSON，防止 sanitize 差异导致多余同步
         lastRemoteItemsJSONRef.current = JSON.stringify({
           items: sanitizeSkus(cleanedSkus),
@@ -1413,6 +1473,7 @@ const App = () => {
           offlineInventoryLogs: sanitizeOfflineInventoryLogs(cleanedOfflineLogs),
           offlineRecipientDirectory: sanitizeRecipientDirectory(cleanedRecipientDirectory),
           deleteApprovals: sanitizeDeleteApprovals(cleanedDeleteApprovals),
+          productFaq: sanitizeProductFaq(cleanedProductFaq),
         });
         hasPendingChangesRef.current = false; // 同步成功，清除标记
         setSyncStatus('ready');
@@ -1425,7 +1486,7 @@ const App = () => {
     }, 1000);
 
     return () => clearTimeout(remoteTimer);
-  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, user, isInitialLoadDone, appId, db]);
+  }, [skus, offlineInventoryItems, offlineInventoryLogs, offlineRecipientDirectory, deleteApprovals, productFaq, user, isInitialLoadDone, appId, db, hasManagedData]);
 
   // --- 4.3 设置自动云端保存 ---
   useEffect(() => {
@@ -1754,6 +1815,394 @@ const App = () => {
       };
     }));
     setWarning(decision === 'approved' ? '审批通过，操作已执行' : '审批已驳回');
+  };
+
+  // ========== 产品百科 CRUD ==========
+  const saveFaqItem = (item) => {
+    if (!ensureEditPermission()) return;
+    const name = String(item.name || '').trim();
+    if (!name) { setWarning('请输入产品品名'); return; }
+    const now = new Date().toISOString();
+    const cleaned = {
+      ...item,
+      name,
+      artNo: String(item.artNo || '').trim(),
+      eans: (item.eans || []).map(e => String(e || '').trim()).filter(Boolean),
+      nameDutch: String(item.nameDutch || '').trim(),
+      spec: String(item.spec || '').trim(),
+      dosageForm: String(item.dosageForm || '').trim(),
+      formula: String(item.formula || '').trim(),
+      usage: String(item.usage || '').trim(),
+      intro: String(item.intro || '').trim(),
+      efficacy: String(item.efficacy || '').trim(),
+      ageRange: String(item.ageRange || '').trim(),
+      precautions: String(item.precautions || '').trim(),
+      allergens: String(item.allergens || '').trim(),
+      images: (item.images || []).filter(img => img && img.dataUrl),
+      updatedAt: now,
+    };
+    if (item.id && productFaq.some(p => p.id === item.id)) {
+      setProductFaq(prev => prev.map(p => p.id === item.id ? { ...p, ...cleaned } : p));
+    } else {
+      cleaned.id = Date.now();
+      setProductFaq(prev => [cleaned, ...prev]);
+    }
+    setFaqEditingItem(null);
+    setWarning('产品信息已保存');
+  };
+
+  const deleteFaqItem = (id) => {
+    if (!ensureEditPermission()) return;
+    setProductFaq(prev => prev.filter(p => p.id !== id));
+    setFaqExpandedId(null);
+    setWarning('产品已删除');
+  };
+
+  const createEmptyFaqItem = () => ({
+    id: '',
+    artNo: '',
+    eans: [''],
+    name: '',
+    nameDutch: '',
+    spec: '',
+    dosageForm: '',
+    formula: '',
+    usage: '',
+    intro: '',
+    efficacy: '',
+    ageRange: '',
+    precautions: '',
+    allergens: '',
+    images: [],
+    updatedAt: '',
+  });
+
+  const openFaqEditor = (item = null) => {
+    const draft = item ? {
+      ...item,
+      eans: item.eans && item.eans.length ? [...item.eans] : [''],
+      images: Array.isArray(item.images) ? [...item.images] : [],
+    } : createEmptyFaqItem();
+    setFaqEditingItem(draft);
+  };
+
+  const updateFaqDraftField = (field, value) => {
+    setFaqEditingItem(prev => prev ? { ...prev, [field]: value } : prev);
+  };
+
+  const updateFaqDraftEan = (index, value) => {
+    setFaqEditingItem(prev => {
+      if (!prev) return prev;
+      const nextEans = [...(prev.eans || [])];
+      nextEans[index] = value;
+      return { ...prev, eans: nextEans };
+    });
+  };
+
+  const addFaqDraftEan = () => {
+    setFaqEditingItem(prev => prev ? { ...prev, eans: [...(prev.eans || []), ''] } : prev);
+  };
+
+  const removeFaqDraftEan = (index) => {
+    setFaqEditingItem(prev => {
+      if (!prev) return prev;
+      const nextEans = (prev.eans || []).filter((_, i) => i !== index);
+      return { ...prev, eans: nextEans.length ? nextEans : [''] };
+    });
+  };
+
+  const removeFaqDraftImage = (index) => {
+    setFaqEditingItem(prev => {
+      if (!prev) return prev;
+      return { ...prev, images: (prev.images || []).filter((_, i) => i !== index) };
+    });
+  };
+
+  const estimateDataUrlBytes = (dataUrl) => {
+    const base64 = String(dataUrl || '').split(',')[1] || '';
+    return Math.ceil((base64.length * 3) / 4);
+  };
+
+  const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`文件 ${file.name} 读取失败`));
+    reader.readAsDataURL(file);
+  });
+
+  const loadImageElement = (dataUrl) => new Promise((resolve, reject) => {
+    const image = new window.Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('图片解码失败'));
+    image.src = dataUrl;
+  });
+
+  const compressFaqImage = async (file) => {
+    const originalDataUrl = await readFileAsDataUrl(file);
+    const image = await loadImageElement(originalDataUrl);
+    const maxDimension = 1600;
+    const maxBytes = 380 * 1024;
+    const width = image.width || 1;
+    const height = image.height || 1;
+    const scale = Math.min(1, maxDimension / Math.max(width, height));
+
+    if (file.size <= maxBytes && scale === 1) {
+      return { name: file.name, dataUrl: originalDataUrl, compressed: false };
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return { name: file.name, dataUrl: originalDataUrl, compressed: false };
+    }
+
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    let quality = 0.9;
+    let compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+    while (estimateDataUrlBytes(compressedDataUrl) > maxBytes && quality > 0.5) {
+      quality -= 0.08;
+      compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+    }
+
+    if (estimateDataUrlBytes(compressedDataUrl) > 512 * 1024) {
+      throw new Error(`图片 ${file.name} 压缩后仍超过 500KB，请换更小的图片`);
+    }
+
+    const normalizedName = file.name.replace(/\.[^.]+$/, '.jpg');
+    return { name: normalizedName, dataUrl: compressedDataUrl, compressed: true };
+  };
+
+  const normalizeFaqImportHeader = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-\/（）()【】\[\]：:]+/g, '');
+
+  const FAQ_IMPORT_HEADER_MAP = {
+    artno: 'artNo',
+    artnumber: 'artNo',
+    artnr: 'artNo',
+    国际ean: 'eans',
+    国际ean码: 'eans',
+    ean: 'eans',
+    eancode: 'eans',
+    eancodes: 'eans',
+    品名: 'name',
+    产品名: 'name',
+    产品名荷兰语: 'nameDutch',
+    产品名荷兰文: 'nameDutch',
+    荷兰语品名: 'nameDutch',
+    规格: 'spec',
+    剂型: 'dosageForm',
+    主要配方与含量: 'formula',
+    主要配方含量: 'formula',
+    用法用量: 'usage',
+    产品介绍: 'intro',
+    功效要点: 'efficacy',
+    适用年龄: 'ageRange',
+    注意事项: 'precautions',
+    过敏原信息: 'allergens',
+  };
+
+  const parseFaqEans = (value) => String(value || '')
+    .split(/[\n,，;；、|/]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  const buildFaqImportItem = (row, rowIndex) => {
+    const mapped = {};
+    Object.entries(row || {}).forEach(([rawKey, rawValue]) => {
+      const normalizedKey = normalizeFaqImportHeader(rawKey);
+      const targetKey = FAQ_IMPORT_HEADER_MAP[normalizedKey];
+      if (!targetKey) return;
+      mapped[targetKey] = rawValue;
+    });
+
+    const candidate = sanitizeProductFaq([{
+      id: Date.now() + rowIndex,
+      artNo: mapped.artNo,
+      eans: parseFaqEans(mapped.eans),
+      name: mapped.name,
+      nameDutch: mapped.nameDutch,
+      spec: mapped.spec,
+      dosageForm: mapped.dosageForm,
+      formula: mapped.formula,
+      usage: mapped.usage,
+      intro: mapped.intro,
+      efficacy: mapped.efficacy,
+      ageRange: mapped.ageRange,
+      precautions: mapped.precautions,
+      allergens: mapped.allergens,
+      images: [],
+      updatedAt: new Date().toISOString(),
+    }])[0];
+
+    return candidate || null;
+  };
+
+  const findMatchingFaqIndices = (items, incoming) => {
+    if (incoming.artNo) {
+      return items.map((item, index) => ({ item, index })).filter(({ item }) => item.artNo === incoming.artNo).map(({ index }) => index);
+    }
+    if (incoming.eans?.length) {
+      return items.map((item, index) => ({ item, index }))
+        .filter(({ item }) => incoming.eans.some(code => (item.eans || []).includes(code)))
+        .map(({ index }) => index);
+    }
+    if (!incoming.name) return [];
+    return items.map((item, index) => ({ item, index }))
+      .filter(({ item }) => {
+        if (item.name !== incoming.name) return false;
+        if (incoming.spec && item.spec !== incoming.spec) return false;
+        if (incoming.dosageForm && item.dosageForm !== incoming.dosageForm) return false;
+        return true;
+      })
+      .map(({ index }) => index);
+  };
+
+  const mergeFaqImportedItem = (existing, incoming) => sanitizeProductFaq([{
+    ...existing,
+    id: existing.id,
+    artNo: incoming.artNo || existing.artNo,
+    eans: incoming.eans?.length ? Array.from(new Set([...(existing.eans || []), ...incoming.eans])) : (existing.eans || []),
+    name: incoming.name || existing.name,
+    nameDutch: incoming.nameDutch || existing.nameDutch,
+    spec: incoming.spec || existing.spec,
+    dosageForm: incoming.dosageForm || existing.dosageForm,
+    formula: incoming.formula || existing.formula,
+    usage: incoming.usage || existing.usage,
+    intro: incoming.intro || existing.intro,
+    efficacy: incoming.efficacy || existing.efficacy,
+    ageRange: incoming.ageRange || existing.ageRange,
+    precautions: incoming.precautions || existing.precautions,
+    allergens: incoming.allergens || existing.allergens,
+    images: existing.images || [],
+    updatedAt: new Date().toISOString(),
+  }])[0];
+
+  const importFaqFromWorkbook = () => {
+    if (!ensureEditPermission()) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.xls,.csv';
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        if (!sheetName) {
+          setWarning('导入文件中没有找到工作表');
+          return;
+        }
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+        if (!rows.length) {
+          setWarning('导入文件中没有可用数据');
+          return;
+        }
+
+        const importedItems = rows
+          .map((row, index) => buildFaqImportItem(row, index))
+          .filter(Boolean);
+
+        if (!importedItems.length) {
+          setWarning('未识别到有效产品资料，请确认表头是否包含 ART NO、国际EAN、品名 等字段');
+          return;
+        }
+
+        let createdCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+        setProductFaq(prev => {
+          const next = [...prev];
+          importedItems.forEach(item => {
+            const matchedIndices = findMatchingFaqIndices(next, item);
+
+            if (matchedIndices.length > 1) {
+              skippedCount += 1;
+              return;
+            }
+
+            if (matchedIndices.length === 1) {
+              const existingIndex = matchedIndices[0];
+              const existing = next[existingIndex];
+              next[existingIndex] = mergeFaqImportedItem(existing, item);
+              updatedCount += 1;
+            } else {
+              next.unshift(item);
+              createdCount += 1;
+            }
+          });
+          return next;
+        });
+
+        setWarning(`FAQ 导入完成：新增 ${createdCount} 条，更新 ${updatedCount} 条，跳过 ${skippedCount} 条歧义记录`);
+      } catch (error) {
+        setWarning('FAQ 文件解析失败：' + (error?.message || '未知错误'));
+      }
+    };
+    input.click();
+  };
+
+  const exportFaqImportTemplate = () => {
+    const worksheet = XLSX.utils.json_to_sheet([
+      {
+        'ART NO': 'ART-001',
+        '国际EAN': '1234567890123;9876543210987',
+        '品名': '示例产品',
+        '产品名(荷兰语)': 'Voorbeeld Product',
+        '规格': '30粒/盒',
+        '剂型': '胶囊',
+        '主要配方与含量': '维生素C 100mg；锌 10mg',
+        '用法用量': '每日1次，每次2粒',
+        '产品介绍': '用于演示 FAQ 批量导入模板',
+        '功效要点': '支持免疫健康',
+        '适用年龄': '12岁以上',
+        '注意事项': '孕妇使用前请咨询医生',
+        '过敏原信息': '含大豆成分',
+      },
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'FAQ模板');
+    XLSX.writeFile(workbook, `FAQ_Import_Template_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const handleFaqImagesSelected = async (files) => {
+    const selectedFiles = Array.from(files || []);
+    if (!selectedFiles.length) return;
+
+    const imageReaders = selectedFiles.map(async file => {
+      if (!file.type.startsWith('image/')) {
+        return { skipped: true, reason: `文件 ${file.name} 不是图片` };
+      }
+      try {
+        const image = await compressFaqImage(file);
+        return image;
+      } catch (error) {
+        return { skipped: true, reason: error?.message || `图片 ${file.name} 处理失败` };
+      }
+    });
+
+    const results = await Promise.all(imageReaders);
+    const images = results.filter(item => item && item.dataUrl);
+    const skipped = results.filter(item => item && item.skipped).map(item => item.reason);
+    const compressedCount = results.filter(item => item && item.compressed).length;
+
+    if (images.length) {
+      setFaqEditingItem(prev => prev ? { ...prev, images: [...(prev.images || []), ...images] } : prev);
+    }
+    if (skipped.length || compressedCount > 0) {
+      const messages = [];
+      if (images.length) messages.push(`已加入 ${images.length} 张图片`);
+      if (compressedCount > 0) messages.push(`${compressedCount} 张图片已自动压缩`);
+      if (skipped.length) messages.push(skipped.join('；'));
+      setWarning(messages.join('；'));
+    }
   };
 
   const updateSku = (id, field, value) => {
@@ -3551,6 +4000,7 @@ const App = () => {
                   { key: 'offline', icon: <Factory size={28}/>, label: '线下库存', desc: '线下仓库出入库管理、库存流水追踪', color: 'from-amber-500 to-amber-700', border: 'border-amber-200', iconBg: 'bg-amber-100 text-amber-600' },
                   { key: 'recipient-library', icon: <List size={28}/>, label: '客户信息库', desc: '客户收件信息集中管理、快速调取', color: 'from-violet-500 to-violet-700', border: 'border-violet-200', iconBg: 'bg-violet-100 text-violet-600' },
                   { key: 'approval', icon: <Lock size={28}/>, label: '审批中心', desc: '关键操作审批流程、删除请求审批', color: 'from-rose-500 to-rose-700', border: 'border-rose-200', iconBg: 'bg-rose-100 text-rose-600', badge: pendingDeleteApprovals.length },
+                  { key: 'faq', icon: <BookOpen size={28}/>, label: '产品百科', desc: '产品基本信息、配方、功效与过敏原查询', color: 'from-teal-500 to-teal-700', border: 'border-teal-200', iconBg: 'bg-teal-100 text-teal-600' },
                   { key: 'dashboard', icon: <Layout size={28}/>, label: '全景大屏', desc: '数据可视化大屏、全局指标总览', color: 'from-emerald-500 to-emerald-700', border: 'border-emerald-200', iconBg: 'bg-emerald-100 text-emerald-600' },
                 ];
                 const available = navItems.filter(n => hasFeature(n.key));
@@ -3829,6 +4279,11 @@ const App = () => {
                         {pendingDeleteApprovals.length > 99 ? '99+' : pendingDeleteApprovals.length}
                       </span>
                     )}
+                  </button>
+                  )}
+                  {hasFeature('faq') && (
+                  <button onClick={() => { setViewMode('faq'); setSideMenuOpen(false); }} className="w-full bg-teal-600 text-white py-3 rounded-xl font-black flex items-center gap-3 px-4 hover:bg-teal-700 shadow-lg active:scale-95 transition-all text-xs tracking-widest uppercase">
+                    <BookOpen size={18}/> 产品百科
                   </button>
                   )}
                 </div>
@@ -5854,6 +6309,237 @@ const App = () => {
               </div>
             </div>
         </div>
+      ) : viewMode === 'faq' ? (
+        <div className="flex-1 flex flex-col p-6 bg-gradient-to-br from-teal-50 via-cyan-50 to-white min-w-0 overflow-hidden">
+          {(() => {
+            const normalizedQuery = String(faqSearchQuery || '').trim().toLowerCase();
+            const filteredFaq = [...productFaq]
+              .filter(item => {
+                if (!normalizedQuery) return true;
+                const haystack = [
+                  item.artNo,
+                  item.name,
+                  item.nameDutch,
+                  item.spec,
+                  item.dosageForm,
+                  ...(item.eans || []),
+                ].join(' ').toLowerCase();
+                return haystack.includes(normalizedQuery);
+              })
+              .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+
+            return (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+                  <div>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-100 text-teal-700 text-[11px] font-black tracking-widest uppercase mb-3">
+                      <BookOpen size={14}/> Product FAQ
+                    </div>
+                    <h1 className="text-3xl font-black text-slate-900 tracking-tight">产品百科</h1>
+                    <p className="text-sm text-slate-500 font-bold mt-1">集中维护产品基础信息、多个EAN码、配方说明与图片资料</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button onClick={() => setViewMode('home')} className="px-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-100">返回首页</button>
+                    {hasFeature('dashboard') && <button onClick={() => setViewMode('dashboard')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs hover:bg-indigo-700">战略全景大屏</button>}
+                    {canEditData && (
+                      <button onClick={exportFaqImportTemplate} className="px-4 py-2 rounded-xl bg-white border border-teal-200 text-teal-700 font-black text-xs hover:bg-teal-50 flex items-center gap-2 shadow-sm">
+                        <Save size={16}/> 下载模板
+                      </button>
+                    )}
+                    {canEditData && (
+                      <button onClick={importFaqFromWorkbook} className="px-4 py-2 rounded-xl bg-cyan-600 text-white font-black text-xs hover:bg-cyan-700 flex items-center gap-2 shadow-sm">
+                        <Upload size={16}/> 批量导入
+                      </button>
+                    )}
+                    {canEditData && (
+                      <button onClick={() => openFaqEditor()} className="px-4 py-2 rounded-xl bg-teal-600 text-white font-black text-xs hover:bg-teal-700 flex items-center gap-2 shadow-sm">
+                        <Plus size={16}/> 新增产品
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr] gap-6 min-h-0 flex-1">
+                  <div className="bg-white/90 backdrop-blur border border-teal-100 rounded-3xl p-5 shadow-sm flex flex-col gap-5">
+                    <div>
+                      <div className="text-[11px] font-black uppercase tracking-[0.25em] text-teal-700 mb-2">搜索产品</div>
+                      <div className="relative">
+                        <input
+                          value={faqSearchQuery}
+                          onChange={(e) => setFaqSearchQuery(e.target.value)}
+                          placeholder="按品名 / ART NO / EAN 检索"
+                          className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-700 outline-none focus:border-teal-400 focus:bg-white"
+                        />
+                        <Compass size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"/>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl bg-teal-50 border border-teal-100 px-4 py-3">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-teal-600">产品数</div>
+                        <div className="text-2xl font-black text-slate-900 mt-1">{productFaq.length}</div>
+                      </div>
+                      <div className="rounded-2xl bg-cyan-50 border border-cyan-100 px-4 py-3">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-cyan-700">搜索结果</div>
+                        <div className="text-2xl font-black text-slate-900 mt-1">{filteredFaq.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl bg-slate-900 text-white p-4">
+                      <div className="text-[10px] font-black uppercase tracking-[0.25em] text-teal-300 mb-2">录入建议</div>
+                      <div className="space-y-2 text-xs text-slate-300 font-medium leading-relaxed">
+                        <div>同一产品支持录入多个国际EAN码。</div>
+                        <div>支持导入 xlsx、xls、csv，表头可使用 ART NO、国际EAN、品名 等字段。</div>
+                        <div>图片会自动压缩，尽量避免超过 Firestore 文档大小上限。</div>
+                        <div>适合录入功效、配方、过敏原、适用年龄等销售查询信息。</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="min-h-0 overflow-y-auto pr-1">
+                    {filteredFaq.length === 0 ? (
+                      <div className="bg-white border border-dashed border-slate-300 rounded-3xl py-20 px-8 text-center shadow-sm">
+                        <div className="w-16 h-16 rounded-3xl bg-teal-100 text-teal-600 flex items-center justify-center mx-auto mb-5">
+                          <BookOpen size={30}/>
+                        </div>
+                        <h3 className="text-xl font-black text-slate-800 mb-2">暂无产品百科条目</h3>
+                        <p className="text-sm text-slate-500 font-medium mb-6">可以先新增产品资料，支持多个EAN码和图片上传。</p>
+                        {canEditData && (
+                          <button onClick={() => openFaqEditor()} className="px-5 py-3 rounded-2xl bg-teal-600 text-white font-black text-sm hover:bg-teal-700">
+                            新建第一条产品资料
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-4 pb-4">
+                        {filteredFaq.map(item => {
+                          const expanded = faqExpandedId === item.id;
+                          return (
+                            <div key={item.id} className="bg-white/95 backdrop-blur border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
+                              <button
+                                onClick={() => setFaqExpandedId(expanded ? null : item.id)}
+                                className="w-full px-6 py-5 text-left hover:bg-slate-50 transition-colors"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-4">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                                      {item.artNo && <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-black tracking-wider">ART NO {item.artNo}</span>}
+                                      {(item.eans || []).slice(0, 3).map(code => (
+                                        <span key={code} className="px-2.5 py-1 rounded-full bg-teal-50 text-teal-700 text-[10px] font-black tracking-wider">EAN {code}</span>
+                                      ))}
+                                      {(item.eans || []).length > 3 && (
+                                        <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black">+{item.eans.length - 3}</span>
+                                      )}
+                                    </div>
+                                    <h3 className="text-xl font-black text-slate-900 break-words">{item.name || '未命名产品'}</h3>
+                                    {item.nameDutch && <p className="text-sm text-slate-500 font-bold mt-1">{item.nameDutch}</p>}
+                                    <div className="flex flex-wrap gap-4 mt-4 text-xs text-slate-500 font-semibold">
+                                      <span>规格：{item.spec || '-'}</span>
+                                      <span>剂型：{item.dosageForm || '-'}</span>
+                                      <span>图片：{item.images?.length || 0} 张</span>
+                                      <span>更新：{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '-'}</span>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {canEditData && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openFaqEditor(item);
+                                        }}
+                                        className="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-black hover:bg-slate-200 flex items-center gap-2"
+                                      >
+                                        <Edit2 size={14}/> 编辑
+                                      </button>
+                                    )}
+                                    {canEditData && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (window.confirm(`确认删除产品「${item.name || '未命名产品'}」吗？`)) {
+                                            deleteFaqItem(item.id);
+                                          }
+                                        }}
+                                        className="px-3 py-2 rounded-xl bg-rose-50 text-rose-700 text-xs font-black hover:bg-rose-100 flex items-center gap-2"
+                                      >
+                                        <Trash2 size={14}/> 删除
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+
+                              {expanded && (
+                                <div className="border-t border-slate-100 px-6 py-6 bg-gradient-to-br from-white to-slate-50">
+                                  <div className="grid grid-cols-1 2xl:grid-cols-[1.2fr_0.8fr] gap-6">
+                                    <div className="space-y-4">
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                          <div className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-2">国际EAN</div>
+                                          <div className="flex flex-wrap gap-2">
+                                            {(item.eans || []).length ? item.eans.map(code => (
+                                              <span key={code} className="px-3 py-1.5 rounded-full bg-teal-50 text-teal-700 text-xs font-black">{code}</span>
+                                            )) : <span className="text-sm text-slate-400">暂无</span>}
+                                          </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                          <div className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-2">基本属性</div>
+                                          <div className="space-y-2 text-sm text-slate-700 font-medium">
+                                            <div>规格：{item.spec || '-'}</div>
+                                            <div>剂型：{item.dosageForm || '-'}</div>
+                                            <div>适用年龄：{item.ageRange || '-'}</div>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {[
+                                        ['主要配方与含量', item.formula],
+                                        ['用法用量', item.usage],
+                                        ['产品介绍', item.intro],
+                                        ['功效要点', item.efficacy],
+                                        ['注意事项', item.precautions],
+                                        ['过敏原信息', item.allergens],
+                                      ].map(([label, value]) => (
+                                        <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4">
+                                          <div className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-2">{label}</div>
+                                          <div className="text-sm text-slate-700 whitespace-pre-wrap leading-7 min-h-[24px]">{value || '暂无内容'}</div>
+                                        </div>
+                                      ))}
+                                    </div>
+
+                                    <div className="space-y-4">
+                                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                        <div className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-3">图片资料</div>
+                                        {item.images?.length ? (
+                                          <div className="grid grid-cols-2 gap-3">
+                                            {item.images.map((img, index) => (
+                                              <div key={`${item.id}-${index}`} className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-50">
+                                                <div className="aspect-square bg-white">
+                                                  <img src={img.dataUrl} alt={img.name || item.name} className="w-full h-full object-cover" />
+                                                </div>
+                                                <div className="px-3 py-2 text-[11px] font-bold text-slate-500 truncate">{img.name || `图片 ${index + 1}`}</div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <div className="text-sm text-slate-400">暂无图片</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </div>
       ) : (
         /* --- 战略全景大屏 --- */
         <div className={`flex-1 flex flex-col p-6 transition-colors ${dashboardTheme === 'dark' ? 'bg-slate-950 text-white' : 'bg-gray-50 text-slate-900'}`}>
@@ -6385,6 +7071,156 @@ const App = () => {
       )}
       </div>
 
+      {faqEditingItem && (
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl max-h-[92vh] overflow-hidden border border-slate-200">
+            <div className="px-6 py-5 bg-gradient-to-r from-teal-600 to-cyan-600 text-white flex items-center justify-between">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.3em] font-black text-teal-100 mb-1">Product FAQ Editor</div>
+                <h3 className="text-2xl font-black">{faqEditingItem.id ? '编辑产品资料' : '新增产品资料'}</h3>
+              </div>
+              <button onClick={() => setFaqEditingItem(null)} className="w-10 h-10 rounded-2xl bg-white/15 hover:bg-white/25 transition-colors flex items-center justify-center">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[calc(92vh-88px)] bg-slate-50">
+              <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.65fr] gap-6">
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="block">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">ART NO</div>
+                      <input value={faqEditingItem.artNo || ''} onChange={(e) => updateFaqDraftField('artNo', e.target.value)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-medium outline-none focus:border-teal-400" />
+                    </label>
+                    <label className="block">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">品名</div>
+                      <input value={faqEditingItem.name || ''} onChange={(e) => updateFaqDraftField('name', e.target.value)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-medium outline-none focus:border-teal-400" />
+                    </label>
+                    <label className="block md:col-span-2">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">产品名（荷兰语）</div>
+                      <input value={faqEditingItem.nameDutch || ''} onChange={(e) => updateFaqDraftField('nameDutch', e.target.value)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-medium outline-none focus:border-teal-400" />
+                    </label>
+                    <label className="block">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">规格</div>
+                      <input value={faqEditingItem.spec || ''} onChange={(e) => updateFaqDraftField('spec', e.target.value)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-medium outline-none focus:border-teal-400" />
+                    </label>
+                    <label className="block">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">剂型</div>
+                      <input value={faqEditingItem.dosageForm || ''} onChange={(e) => updateFaqDraftField('dosageForm', e.target.value)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-medium outline-none focus:border-teal-400" />
+                    </label>
+                    <label className="block md:col-span-2">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">适用年龄</div>
+                      <input value={faqEditingItem.ageRange || ''} onChange={(e) => updateFaqDraftField('ageRange', e.target.value)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-medium outline-none focus:border-teal-400" />
+                    </label>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-5">
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                      <div>
+                        <div className="text-[11px] font-black uppercase tracking-wider text-slate-500">国际 EAN</div>
+                        <div className="text-xs text-slate-400 font-medium mt-1">一个产品可维护多个EAN码</div>
+                      </div>
+                      <button onClick={addFaqDraftEan} className="px-3 py-2 rounded-xl bg-teal-50 text-teal-700 text-xs font-black hover:bg-teal-100 flex items-center gap-2">
+                        <Plus size={14}/> 添加EAN
+                      </button>
+                    </div>
+                    <div className="space-y-3">
+                      {(faqEditingItem.eans || []).map((ean, index) => (
+                        <div key={`draft-ean-${index}`} className="flex items-center gap-3">
+                          <input value={ean} onChange={(e) => updateFaqDraftEan(index, e.target.value)} placeholder={`EAN ${index + 1}`} className="flex-1 px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium outline-none focus:border-teal-400 focus:bg-white" />
+                          <button onClick={() => removeFaqDraftEan(index)} className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-700 hover:bg-rose-100 flex items-center justify-center">
+                            <Trash2 size={15}/>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {[
+                    ['formula', '主要配方与含量', 4],
+                    ['usage', '用法用量', 4],
+                    ['intro', '产品介绍', 5],
+                    ['efficacy', '功效要点', 5],
+                    ['precautions', '注意事项', 4],
+                    ['allergens', '过敏原信息', 4],
+                  ].map(([field, label, rows]) => (
+                    <label key={field} className="block bg-white border border-slate-200 rounded-3xl p-5">
+                      <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-3">{label}</div>
+                      <textarea
+                        rows={rows}
+                        value={faqEditingItem[field] || ''}
+                        onChange={(e) => updateFaqDraftField(field, e.target.value)}
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium outline-none focus:border-teal-400 focus:bg-white resize-y"
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="space-y-5">
+                  <div className="bg-white border border-slate-200 rounded-3xl p-5">
+                    <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-3">图片上传</div>
+                    <label className="border-2 border-dashed border-teal-200 rounded-3xl bg-teal-50/60 p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-teal-50 transition-colors">
+                      <Upload size={28} className="text-teal-600 mb-3"/>
+                      <div className="text-sm font-black text-slate-800">上传产品图片</div>
+                      <div className="text-xs text-slate-500 font-medium mt-1">支持多选，系统会自动压缩并控制单张大小</div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={async (e) => {
+                          await handleFaqImagesSelected(e.target.files);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-5">
+                    <div className="flex items-center gap-2 mb-3 text-[11px] font-black uppercase tracking-wider text-slate-500">
+                      <Image size={14}/> 已上传图片
+                    </div>
+                    {faqEditingItem.images?.length ? (
+                      <div className="space-y-3">
+                        {faqEditingItem.images.map((img, index) => (
+                          <div key={`draft-image-${index}`} className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-50">
+                            <div className="aspect-[4/3] bg-white">
+                              <img src={img.dataUrl} alt={img.name || `图片 ${index + 1}`} className="w-full h-full object-cover" />
+                            </div>
+                            <div className="px-3 py-2 flex items-center justify-between gap-3">
+                              <div className="text-xs font-bold text-slate-500 truncate">{img.name || `图片 ${index + 1}`}</div>
+                              <button onClick={() => removeFaqDraftImage(index)} className="text-rose-600 text-xs font-black hover:text-rose-700">移除</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-slate-400">尚未上传图片</div>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-900 text-white rounded-3xl p-5">
+                    <div className="text-[11px] font-black uppercase tracking-[0.25em] text-teal-300 mb-3">保存提示</div>
+                    <div className="space-y-2 text-xs text-slate-300 font-medium leading-relaxed">
+                      <div>建议先录入基础字段，再补充配方与功效说明。</div>
+                      <div>若图片较多，请控制分辨率与大小，避免影响云端同步。</div>
+                      <div>保存后会自动写入当前账号的云端备份与本地缓存。</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <button onClick={() => setFaqEditingItem(null)} className="px-5 py-3 rounded-2xl bg-white border border-slate-300 text-slate-700 font-black text-sm hover:bg-slate-100">取消</button>
+                <button onClick={() => saveFaqItem(faqEditingItem)} className="px-5 py-3 rounded-2xl bg-teal-600 text-white font-black text-sm hover:bg-teal-700 shadow-sm flex items-center gap-2">
+                  <Save size={16}/> 保存产品资料
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 设置模态框 */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -6472,7 +7308,7 @@ const App = () => {
                   </div>
 
                   <div className="text-[10px] text-slate-500 font-medium">
-                    说明：`admin` 可管理权限与系统设置；`editor` 可编辑业务数据；`viewer` 仅查看。功能模块可单独开关。
+                    说明：admin 可管理权限与系统设置；editor 可编辑业务数据；viewer 仅查看。功能模块可单独开关，产品百科权限也在下方单独控制。
                   </div>
 
                   <div className="max-h-[400px] overflow-y-auto space-y-3 pt-1">
@@ -6521,7 +7357,9 @@ const App = () => {
                                 )}
                               </div>
                               {!isAdmin && (
-                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                <div className="space-y-2 pt-1">
+                                  <div className="text-[10px] text-slate-400 font-medium">勾选后用户可访问对应模块，取消勾选后首页、侧栏和页面入口都会隐藏。产品百科权限已包含在内。</div>
+                                  <div className="flex flex-wrap gap-1.5">
                                   {ALL_FEATURES.map(f => {
                                     const checked = features.includes(f.key);
                                     return (
@@ -6539,6 +7377,7 @@ const App = () => {
                                       </label>
                                     );
                                   })}
+                                  </div>
                                 </div>
                               )}
                               {isAdmin && <div className="text-[10px] text-emerald-600 font-medium">管理员拥有全部功能权限</div>}
@@ -6565,7 +7404,8 @@ const App = () => {
                   <div className="text-[10px] text-green-700">
                     系统会在数据发生变化后<b>每30秒</b>自动保存<b>两份</b>备份：<br/>
                     • <b>常规备份</b>：每次自动保存（数据骤降&gt;50%时拦截）<br/>
-                    • <b>🛡️ 安全备份</b>：仅在数据量健康时更新（数据骤降&gt;20%时冻结），作为最后防线
+                    • <b>🛡️ 安全备份</b>：仅在数据量健康时更新（数据骤降&gt;20%时冻结），作为最后防线<br/>
+                    • 备份内容已包含 SKU、线下库存、审批、客户信息库、产品百科 FAQ 及其图片数据
                   </div>
                   {lastBackupInfo && (
                     <div className="text-[10px] text-green-600 bg-green-100 px-2 py-1 rounded">
