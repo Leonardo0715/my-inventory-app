@@ -268,6 +268,7 @@ function sanitizeProductFaq(items) {
       const formula = String(item.formula ?? '').trim();
       const usage = String(item.usage ?? '').trim();
       const intro = String(item.intro ?? '').trim();
+      const filingRecord = String(item.filingRecord ?? item.filingArchive ?? '').trim();
       const efficacy = String(item.efficacy ?? '').trim();
       const ageRange = String(item.ageRange ?? '').trim();
       const precautions = String(item.precautions ?? '').trim();
@@ -277,7 +278,7 @@ function sanitizeProductFaq(items) {
         dataUrl: String(img.dataUrl ?? ''),
       })).filter(img => img.dataUrl) : [];
       const updatedAt = String(item.updatedAt ?? '');
-      return { id, artNo, eans, name, nameDutch, spec, dosageForm, formula, usage, intro, efficacy, ageRange, precautions, allergens, images, updatedAt };
+      return { id, artNo, eans, name, nameDutch, spec, dosageForm, formula, usage, intro, filingRecord, efficacy, ageRange, precautions, allergens, images, updatedAt };
     })
     .filter(item => item.name.length > 0);
 }
@@ -1834,6 +1835,7 @@ const App = () => {
       formula: String(item.formula || '').trim(),
       usage: String(item.usage || '').trim(),
       intro: String(item.intro || '').trim(),
+      filingRecord: String(item.filingRecord || '').trim(),
       efficacy: String(item.efficacy || '').trim(),
       ageRange: String(item.ageRange || '').trim(),
       precautions: String(item.precautions || '').trim(),
@@ -1869,6 +1871,7 @@ const App = () => {
     formula: '',
     usage: '',
     intro: '',
+    filingRecord: '',
     efficacy: '',
     ageRange: '',
     precautions: '',
@@ -2002,6 +2005,9 @@ const App = () => {
     主要配方含量: 'formula',
     用法用量: 'usage',
     产品介绍: 'intro',
+    备案底档: 'filingRecord',
+    备案底档信息: 'filingRecord',
+    备案资料: 'filingRecord',
     功效要点: 'efficacy',
     适用年龄: 'ageRange',
     注意事项: 'precautions',
@@ -2033,6 +2039,7 @@ const App = () => {
       formula: mapped.formula,
       usage: mapped.usage,
       intro: mapped.intro,
+      filingRecord: mapped.filingRecord,
       efficacy: mapped.efficacy,
       ageRange: mapped.ageRange,
       precautions: mapped.precautions,
@@ -2076,6 +2083,7 @@ const App = () => {
     formula: incoming.formula || existing.formula,
     usage: incoming.usage || existing.usage,
     intro: incoming.intro || existing.intro,
+    filingRecord: incoming.filingRecord || existing.filingRecord,
     efficacy: incoming.efficacy || existing.efficacy,
     ageRange: incoming.ageRange || existing.ageRange,
     precautions: incoming.precautions || existing.precautions,
@@ -2161,6 +2169,7 @@ const App = () => {
         '主要配方与含量': '维生素C 100mg；锌 10mg',
         '用法用量': '每日1次，每次2粒',
         '产品介绍': '用于演示 FAQ 批量导入模板',
+        '备案底档': '备案编号：国食健字G20260001；备案单位：示例公司',
         '功效要点': '支持免疫健康',
         '适用年龄': '12岁以上',
         '注意事项': '孕妇使用前请咨询医生',
@@ -6391,7 +6400,7 @@ const App = () => {
                         <div>同一产品支持录入多个国际EAN码。</div>
                         <div>支持导入 xlsx、xls、csv，表头可使用 ART NO、国际EAN、品名 等字段。</div>
                         <div>图片会自动压缩，尽量避免超过 Firestore 文档大小上限。</div>
-                        <div>适合录入功效、配方、过敏原、适用年龄等销售查询信息。</div>
+                        <div>适合录入功效、配方、备案底档、过敏原、适用年龄等销售查询信息。</div>
                       </div>
                     </div>
                   </div>
@@ -6496,6 +6505,7 @@ const App = () => {
                                         ['主要配方与含量', item.formula],
                                         ['用法用量', item.usage],
                                         ['产品介绍', item.intro],
+                                        ['备案底档', item.filingRecord],
                                         ['功效要点', item.efficacy],
                                         ['注意事项', item.precautions],
                                         ['过敏原信息', item.allergens],
@@ -7140,6 +7150,7 @@ const App = () => {
                     ['formula', '主要配方与含量', 4],
                     ['usage', '用法用量', 4],
                     ['intro', '产品介绍', 5],
+                    ['filingRecord', '备案底档', 5],
                     ['efficacy', '功效要点', 5],
                     ['precautions', '注意事项', 4],
                     ['allergens', '过敏原信息', 4],
