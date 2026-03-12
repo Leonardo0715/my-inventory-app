@@ -358,7 +358,7 @@ function sanitizeRecipientDirectory(customers) {
 function sanitizeDeleteApprovals(approvals) {
   const safeArr = Array.isArray(approvals) ? approvals : [];
   const allowedStatus = ['pending', 'approved', 'rejected'];
-  const allowedType = ['sku', 'offline_sku', 'po', 'customer_edit', 'customer_delete', 'profile_delete'];
+  const allowedType = ['sku', 'offline_sku', 'po', 'customer_edit', 'customer_delete', 'profile_delete', 'expired_destroy', 'batch_edit'];
   const RETENTION_DAYS = 90;
   const cutoff = Date.now() - RETENTION_DAYS * 86400000;
   return safeArr
