@@ -2652,12 +2652,14 @@ const App = () => {
     if (!account) { setWarning('当前未获取到登录账号，请重新登录后再操作'); return; }
     const targetItem = offlineInventoryItems.find(item => item.id === itemIdNum);
     if (!targetItem) { setWarning('线下库存品项不存在'); return; }
-    // 检查是否有实际变化
+    // 检查是否有实际变化（数量或效期）
     const changedBatches = offlineCalibrationBatches.filter(b => {
       const actual = Number(b.actualQty);
-      return Number.isFinite(actual) && actual >= 0 && actual !== b.sysQty;
+      const qtyChanged = Number.isFinite(actual) && actual >= 0 && actual !== b.sysQty;
+      const dateChanged = (b.newExpiryDate ?? '') !== (b.expiryDate ?? '');
+      return qtyChanged || dateChanged;
     });
-    if (changedBatches.length === 0) { setWarning('所有批次实际数量与系统一致，无需校准'); return; }
+    if (changedBatches.length === 0) { setWarning('所有批次与系统一致，无需校准'); return; }
     // 验证所有填写了的 actualQty 都合法
     for (const b of offlineCalibrationBatches) {
       const v = Number(b.actualQty);
@@ -2665,6 +2667,12 @@ const App = () => {
         setWarning(`批次 [${b.expiryDate || '无效期'}] 的实际数量无效`);
         return;
       }
+    }
+    // 验证修改后的效期不重复
+    const finalDates = offlineCalibrationBatches.map(b => b.newExpiryDate ?? b.expiryDate ?? '');
+    if (new Set(finalDates).size !== finalDates.length) {
+      setWarning('校准后存在重复的失效日期，请检查调整');
+      return;
     }
     const now = new Date().toISOString();
     const oldTotal = Number(targetItem.currentStock || 0);
@@ -2675,34 +2683,52 @@ const App = () => {
     const logEntries = [];
     for (const cb of offlineCalibrationBatches) {
       const actual = Number(cb.actualQty);
-      if (!Number.isFinite(actual) || actual < 0 || actual === cb.sysQty) continue;
-      const delta = actual - cb.sysQty;
+      const finalQty = (Number.isFinite(actual) && actual >= 0) ? actual : cb.sysQty;
+      const oldDate = cb.expiryDate ?? '';
+      const newDate = cb.newExpiryDate ?? oldDate;
+      const dateChanged = newDate !== oldDate;
+      const qtyChanged = finalQty !== cb.sysQty;
+      if (!dateChanged && !qtyChanged) continue;
+      const delta = finalQty - cb.sysQty;
       if (delta > 0) totalDeltaIn += delta;
-      else totalDeltaOut += Math.abs(delta);
+      else if (delta < 0) totalDeltaOut += Math.abs(delta);
       // 更新批次
-      const bIdx = newBatches.findIndex(b => b.expiryDate === cb.expiryDate);
-      if (bIdx >= 0) {
-        if (actual > 0) {
-          newBatches[bIdx] = { ...newBatches[bIdx], qty: actual };
-        } else {
-          newBatches.splice(bIdx, 1);
+      const bIdx = newBatches.findIndex(b => b.expiryDate === oldDate);
+      if (dateChanged) {
+        // 效期变更：移除旧批次，合并或新建到新效期
+        if (bIdx >= 0) newBatches.splice(bIdx, 1);
+        const newBIdx = newBatches.findIndex(b => b.expiryDate === newDate);
+        if (newBIdx >= 0) {
+          newBatches[newBIdx] = { ...newBatches[newBIdx], qty: newBatches[newBIdx].qty + finalQty };
+        } else if (finalQty > 0) {
+          newBatches.push({ expiryDate: newDate, qty: finalQty });
         }
-      } else if (actual > 0) {
-        newBatches.push({ expiryDate: cb.expiryDate, qty: actual });
+      } else {
+        // 仅数量变更
+        if (bIdx >= 0) {
+          if (finalQty > 0) { newBatches[bIdx] = { ...newBatches[bIdx], qty: finalQty }; }
+          else { newBatches.splice(bIdx, 1); }
+        } else if (finalQty > 0) {
+          newBatches.push({ expiryDate: oldDate, qty: finalQty });
+        }
       }
+      // 生成日志
+      const remarkParts = [];
+      if (dateChanged) remarkParts.push(`效期：${oldDate || '无效期'} → ${newDate || '无效期'}`);
+      if (qtyChanged) remarkParts.push(`数量：${cb.sysQty} → ${finalQty}（${delta > 0 ? '+' : ''}${delta}）`);
       logEntries.push({
         id: Date.now() + logEntries.length,
         itemId: targetItem.id,
         itemName: targetItem.name,
-        type: delta > 0 ? 'in' : 'out',
+        type: delta > 0 ? 'in' : (delta < 0 ? 'out' : 'in'),
         purpose: 'calibration',
         qty: Math.abs(delta),
         account,
         customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
         profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
         trackingNo: '',
-        batchExpiryDate: cb.expiryDate,
-        remark: remark || `批次校准 [${cb.expiryDate || '无效期'}]：${cb.sysQty} → ${actual}（${delta > 0 ? '+' : ''}${delta}）`,
+        batchExpiryDate: newDate,
+        remark: remark || `批次校准 [${remarkParts.join('；')}]`,
         operator: user?.email || '',
         happenedAt: now,
       });
@@ -5444,7 +5470,7 @@ const App = () => {
                       setOfflineCalibrationItemId(id);
                       if (id) {
                         const item = offlineInventoryItems.find(i => i.id === Number(id));
-                        setOfflineCalibrationBatches((item?.batches || []).map(b => ({ expiryDate: b.expiryDate, sysQty: b.qty, actualQty: '' })));
+                        setOfflineCalibrationBatches((item?.batches || []).map(b => ({ expiryDate: b.expiryDate, newExpiryDate: b.expiryDate, sysQty: b.qty, actualQty: '' })));
                       } else {
                         setOfflineCalibrationBatches([]);
                       }
@@ -5472,8 +5498,17 @@ const App = () => {
                             const actual = Number(b.actualQty);
                             const delta = b.actualQty !== '' && Number.isFinite(actual) ? actual - b.sysQty : null;
                             return (
-                              <tr key={bIdx} className={delta !== null && delta !== 0 ? (delta > 0 ? 'bg-emerald-50' : 'bg-rose-50') : ''}>
-                                <td className="px-3 py-2 font-bold text-slate-700">{b.expiryDate || '无效期'}</td>
+                              <tr key={bIdx} className={delta !== null && delta !== 0 ? (delta > 0 ? 'bg-emerald-50' : 'bg-rose-50') : (b.newExpiryDate !== b.expiryDate ? 'bg-blue-50' : '')}>
+                                <td className="px-3 py-2">
+                                  <input
+                                    type="date"
+                                    value={b.newExpiryDate || ''}
+                                    onChange={e => setOfflineCalibrationBatches(prev => prev.map((bb, i) => i === bIdx ? { ...bb, newExpiryDate: e.target.value } : bb))}
+                                    className={`w-full border rounded px-1 py-0.5 text-xs font-bold ${b.newExpiryDate !== b.expiryDate ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-slate-300 text-slate-700'}`}
+                                  />
+                                  {!b.expiryDate && <div className="text-[9px] text-slate-400 mt-0.5">原：无效期</div>}
+                                  {b.expiryDate && b.newExpiryDate !== b.expiryDate && <div className="text-[9px] text-blue-500 mt-0.5">原：{b.expiryDate}</div>}
+                                </td>
                                 <td className="px-3 py-2 text-center font-black text-slate-600">{b.sysQty}</td>
                                 <td className="px-3 py-2 text-center">
                                   <input
