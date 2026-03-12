@@ -2502,9 +2502,9 @@ const App = () => {
         setWarning(`该批次库存不足（可用：${batch?.qty || 0}）`);
         return;
       }
-      // 过期批次限制：仅"过期销毁"用途可出库
+      // 过期批次限制：仅"过期销毁"用途可出库（效期当天仍属有效期内）
       const todayStr = new Date().toISOString().split('T')[0];
-      if (batchExpiry && batchExpiry <= todayStr && txPurpose !== 'expired_destroy') {
+      if (batchExpiry && batchExpiry < todayStr && txPurpose !== 'expired_destroy') {
         setWarning('该批次已过期，仅允许「过期销毁」用途出库');
         return;
       }
@@ -2604,7 +2604,7 @@ const App = () => {
         ...item,
         currentStock: Math.max(0, currentStock - qty),
         batches,
-        outboundTotal: outboundTotal + (qty <= currentStock ? qty : currentStock),
+        outboundTotal: outboundTotal + qty,
         lastOutboundAccount: account,
         remark: remark || item.remark,
         updatedAt: now,
@@ -5597,7 +5597,7 @@ const App = () => {
                                       </thead>
                                       <tbody className="divide-y divide-slate-100">
                                         {batches.map((b, bIdx) => {
-                                          const isExpiredBatch = b.expiryDate && b.expiryDate <= todayStr;
+                                          const isExpiredBatch = b.expiryDate && b.expiryDate < todayStr;
                                           const sixMonthLater = new Date();
                                           sixMonthLater.setMonth(sixMonthLater.getMonth() + 6);
                                           const sixMonthStr = sixMonthLater.toISOString().split('T')[0];
