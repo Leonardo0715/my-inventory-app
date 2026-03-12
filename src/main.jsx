@@ -5290,7 +5290,7 @@ const App = () => {
                         >
                           <option value="">请选择批次（效期）</option>
                           {availBatches.map((b, idx) => {
-                            const isExpired = b.expiryDate && b.expiryDate <= todayStr;
+                            const isExpired = b.expiryDate && b.expiryDate < todayStr;
                             return (
                               <option key={idx} value={b.expiryDate}>
                                 {b.expiryDate || '无效期'} · 库存 {b.qty}{isExpired ? ' ⚠️已过期' : ''}
@@ -5990,7 +5990,17 @@ const App = () => {
                             <tbody className="divide-y divide-slate-100">
                               {editingBatchItem.batches.map((b, bIdx) => (
                                 <tr key={bIdx}>
-                                  <td className="px-3 py-2 font-bold text-slate-700">{b.expiryDate || '无效期'}</td>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="date"
+                                      value={b.expiryDate || ''}
+                                      onChange={e => setEditingBatchItem(prev => ({
+                                        ...prev,
+                                        batches: prev.batches.map((bb, i) => i === bIdx ? { ...bb, expiryDate: e.target.value } : bb)
+                                      }))}
+                                      className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700"
+                                    />
+                                  </td>
                                   <td className="px-3 py-2 text-right">
                                     <input
                                       type="number"
@@ -6021,24 +6031,7 @@ const App = () => {
                           onClick={() => setEditingBatchItem(prev => ({ ...prev, batches: [...prev.batches, { expiryDate: '', qty: 0 }] }))}
                           className="w-full py-2 border border-dashed border-slate-300 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50"
                         >＋ 新增批次行</button>
-                        {editingBatchItem.batches.some(b => !b.expiryDate) && (
-                          <div className="space-y-2">
-                            {editingBatchItem.batches.map((b, bIdx) => !b.expiryDate ? (
-                              <div key={bIdx} className="flex items-center gap-2">
-                                <span className="text-[10px] text-slate-500 font-bold w-20">第{bIdx + 1}行效期：</span>
-                                <input
-                                  type="date"
-                                  value={b.expiryDate}
-                                  onChange={e => setEditingBatchItem(prev => ({
-                                    ...prev,
-                                    batches: prev.batches.map((bb, i) => i === bIdx ? { ...bb, expiryDate: e.target.value } : bb)
-                                  }))}
-                                  className="flex-1 px-2 py-1 border border-amber-300 bg-amber-50 rounded text-xs font-mono"
-                                />
-                              </div>
-                            ) : null)}
-                          </div>
-                        )}
+
                       </>
                     );
                   })()}
