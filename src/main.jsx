@@ -2668,6 +2668,14 @@ const App = () => {
         return;
       }
     }
+    // 验证新增行必须填写效期和数量
+    for (const b of offlineCalibrationBatches) {
+      if (b.isNew) {
+        if (!b.newExpiryDate) { setWarning('新增批次必须填写失效日期'); return; }
+        const v = Number(b.actualQty);
+        if (!Number.isFinite(v) || v <= 0) { setWarning('新增批次必须填写有效数量（大于0）'); return; }
+      }
+    }
     // 验证修改后的效期不重复
     const finalDates = offlineCalibrationBatches.map(b => b.newExpiryDate ?? b.expiryDate ?? '');
     if (new Set(finalDates).size !== finalDates.length) {
@@ -5491,6 +5499,7 @@ const App = () => {
                             <th className="px-3 py-1.5 text-center font-black">系统数量</th>
                             <th className="px-3 py-1.5 text-center font-black">实际数量</th>
                             <th className="px-3 py-1.5 text-center font-black">差异</th>
+                            <th className="px-3 py-1.5 text-center font-black w-10"></th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -5509,7 +5518,7 @@ const App = () => {
                                   {!b.expiryDate && <div className="text-[9px] text-slate-400 mt-0.5">原：无效期</div>}
                                   {b.expiryDate && b.newExpiryDate !== b.expiryDate && <div className="text-[9px] text-blue-500 mt-0.5">原：{b.expiryDate}</div>}
                                 </td>
-                                <td className="px-3 py-2 text-center font-black text-slate-600">{b.sysQty}</td>
+                                <td className="px-3 py-2 text-center font-black text-slate-600">{b.isNew ? <span className="text-emerald-600 text-[10px]">新增</span> : b.sysQty}</td>
                                 <td className="px-3 py-2 text-center">
                                   <input
                                     type="number"
@@ -5523,6 +5532,14 @@ const App = () => {
                                 <td className={`px-3 py-2 text-center font-black ${delta === null || delta === 0 ? 'text-slate-400' : delta > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                   {delta === null ? '-' : delta === 0 ? '无差异' : `${delta > 0 ? '+' : ''}${delta}`}
                                 </td>
+                                <td className="px-3 py-2 text-center">
+                                  {b.isNew && (
+                                    <button
+                                      onClick={() => setOfflineCalibrationBatches(prev => prev.filter((_, i) => i !== bIdx))}
+                                      className="text-rose-500 hover:text-rose-700 text-xs font-bold"
+                                    >✕</button>
+                                  )}
+                                </td>
                               </tr>
                             );
                           })}
@@ -5531,7 +5548,13 @@ const App = () => {
                     </div>
                   )}
                   {offlineCalibrationItemId && offlineCalibrationBatches.length === 0 && (
-                    <div className="text-xs text-slate-400 italic p-2">该品项暂无批次数据</div>
+                    <div className="text-xs text-slate-400 italic p-2">该品项暂无批次数据，可点击下方按钮新增</div>
+                  )}
+                  {offlineCalibrationItemId && (
+                    <button
+                      onClick={() => setOfflineCalibrationBatches(prev => [...prev, { expiryDate: '', newExpiryDate: '', sysQty: 0, actualQty: '', isNew: true }])}
+                      className="w-full py-2 border border-dashed border-amber-300 rounded-lg text-xs font-bold text-amber-600 hover:bg-amber-50"
+                    >＋ 新增效期批次</button>
                   )}
                   {offlineCalibrationItemId && offlineCalibrationBatches.length > 0 && (() => {
                     const sysTotal = offlineCalibrationBatches.reduce((s, b) => s + b.sysQty, 0);
