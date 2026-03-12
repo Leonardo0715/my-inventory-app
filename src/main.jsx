@@ -2701,7 +2701,7 @@ const App = () => {
       if (delta > 0) totalDeltaIn += delta;
       else if (delta < 0) totalDeltaOut += Math.abs(delta);
       // 更新批次
-      const bIdx = newBatches.findIndex(b => b.expiryDate === oldDate);
+      const bIdx = cb.isNew ? -1 : newBatches.findIndex(b => b.expiryDate === oldDate);
       if (dateChanged) {
         // 效期变更：移除旧批次，合并或新建到新效期
         if (bIdx >= 0) newBatches.splice(bIdx, 1);
