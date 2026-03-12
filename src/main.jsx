@@ -249,7 +249,7 @@ function sanitizeOfflineInventoryLogs(logs) {
       const happenedAt = String(log.happenedAt ?? new Date().toISOString());
       return { id, itemId, itemName, type, purpose, qty, account, customerId, customerName, customerPlatform, customerIdentity, customerPhone, profileId, profileLabel, profileReceiver, profilePhone, profileAddress, trackingNo, batchExpiryDate, remark, operator, happenedAt };
     })
-    .filter(log => log.itemName && log.qty > 0);
+    .filter(log => log.itemName && (log.qty > 0 || log.purpose === 'calibration'));
 }
 
 function sanitizeProductFaq(items) {
@@ -3519,7 +3519,7 @@ const App = () => {
       if (earliestArrivalIndex >= 0) {
         // 从最早的补货日期开始，计算还能覆盖多少天
         const remainingDays = f.data.slice(earliestArrivalIndex).findIndex(d => d.stock <= 0);
-        targetDayIndex = remainingDays >= 0 ? remainingDays : 400;
+        targetDayIndex = remainingDays >= 0 ? earliestArrivalIndex + remainingDays : 400;
       }
     } else {
       // 常规逻辑：查找第一个库存归零的时刻
