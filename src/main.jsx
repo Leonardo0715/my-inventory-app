@@ -2737,18 +2737,58 @@ const App = () => {
     if (!oldLog) return;
     const oldQty = Number(oldLog.qty || 0);
     const newQty = Math.max(0, Number(updates.qty) || 0);
+    const oldBatchKey = oldLog.batchExpiryDate ?? '';
+    const newBatchKey = updates.batchExpiryDate ?? '';
     const qtyDelta = newQty - oldQty;
-    if (qtyDelta !== 0) {
+    const batchChanged = oldBatchKey !== newBatchKey;
+    if (qtyDelta !== 0 || batchChanged) {
       setOfflineInventoryItems(prev => prev.map(item => {
         if (item.id !== oldLog.itemId) return item;
-        const currentStock = Number(item.currentStock || 0);
-        const outboundTotal = Number(item.outboundTotal || 0);
-        const inboundTotal = Number(item.inboundTotal || 0);
+        let currentStock = Number(item.currentStock || 0);
+        let outboundTotal = Number(item.outboundTotal || 0);
+        let inboundTotal = Number(item.inboundTotal || 0);
         let batches = [...(item.batches || [])];
-        const batchKey = oldLog.batchExpiryDate ?? '';
-        const bIdx = batches.findIndex(b => b.expiryDate === batchKey);
+        const sortBatches = () => batches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
+        if (batchChanged) {
+          // 批次效期变更：先回退旧批次，再应用到新批次
+          const oldBIdx = batches.findIndex(b => b.expiryDate === oldBatchKey);
+          if (oldLog.type === 'out') {
+            // 回退：旧批次库存回加
+            if (oldBIdx >= 0) { batches[oldBIdx] = { ...batches[oldBIdx], qty: batches[oldBIdx].qty + oldQty }; }
+            else if (oldQty > 0) { batches.push({ expiryDate: oldBatchKey, qty: oldQty }); }
+            currentStock += oldQty;
+            outboundTotal = Math.max(0, outboundTotal - oldQty);
+            // 应用：新批次库存扣减
+            const newBIdx = batches.findIndex(b => b.expiryDate === newBatchKey);
+            if (newBIdx >= 0) {
+              const nq = Math.max(0, batches[newBIdx].qty - newQty);
+              if (nq > 0) batches[newBIdx] = { ...batches[newBIdx], qty: nq };
+              else batches.splice(newBIdx, 1);
+            }
+            currentStock = Math.max(0, currentStock - newQty);
+            outboundTotal += newQty;
+          } else {
+            // 回退：旧批次库存回扣
+            if (oldBIdx >= 0) {
+              const nq = Math.max(0, batches[oldBIdx].qty - oldQty);
+              if (nq > 0) batches[oldBIdx] = { ...batches[oldBIdx], qty: nq };
+              else batches.splice(oldBIdx, 1);
+            }
+            currentStock = Math.max(0, currentStock - oldQty);
+            inboundTotal = Math.max(0, inboundTotal - oldQty);
+            // 应用：新批次库存增加
+            const newBIdx = batches.findIndex(b => b.expiryDate === newBatchKey);
+            if (newBIdx >= 0) { batches[newBIdx] = { ...batches[newBIdx], qty: batches[newBIdx].qty + newQty }; }
+            else if (newQty > 0) { batches.push({ expiryDate: newBatchKey, qty: newQty }); }
+            currentStock += newQty;
+            inboundTotal += newQty;
+          }
+          sortBatches();
+          return { ...item, currentStock, batches, outboundTotal, inboundTotal };
+        }
+        // 仅数量变更（批次不变）
+        const bIdx = batches.findIndex(b => b.expiryDate === oldBatchKey);
         if (oldLog.type === 'out') {
-          // 出库数量增加 → 批次库存减少；出库数量减少 → 批次库存增加
           if (bIdx >= 0) {
             const newBatchQty = Math.max(0, batches[bIdx].qty - qtyDelta);
             if (newBatchQty > 0) { batches[bIdx] = { ...batches[bIdx], qty: newBatchQty }; }
@@ -2756,14 +2796,13 @@ const App = () => {
           }
           return { ...item, currentStock: Math.max(0, currentStock - qtyDelta), batches, outboundTotal: Math.max(0, outboundTotal + qtyDelta) };
         }
-        // 入库数量变化 → 批次库存同步调整
         if (bIdx >= 0) {
           const newBatchQty = Math.max(0, batches[bIdx].qty + qtyDelta);
           if (newBatchQty > 0) { batches[bIdx] = { ...batches[bIdx], qty: newBatchQty }; }
           else { batches.splice(bIdx, 1); }
         } else if (qtyDelta > 0) {
-          batches.push({ expiryDate: batchKey, qty: qtyDelta });
-          batches.sort((a, b) => (!a.expiryDate ? 1 : !b.expiryDate ? -1 : a.expiryDate.localeCompare(b.expiryDate)));
+          batches.push({ expiryDate: oldBatchKey, qty: qtyDelta });
+          sortBatches();
         }
         return { ...item, currentStock: Math.max(0, currentStock + qtyDelta), batches, inboundTotal: Math.max(0, inboundTotal + qtyDelta) };
       }));
@@ -5190,9 +5229,9 @@ const App = () => {
               <div className="text-[10px] font-black text-slate-500 uppercase">累计出库</div>
               <div className="text-2xl font-black text-rose-700">{Math.round(offlineInventorySummary.outboundTotal).toLocaleString()}</div>
             </div>
-            <div className={`bg-white border rounded-xl px-4 py-3 ${(() => { const todayStr = new Date().toISOString().split('T')[0]; const expCount = offlineInventoryItems.reduce((c, item) => c + (item.batches || []).filter(b => b.expiryDate && b.expiryDate <= todayStr && b.qty > 0).length, 0); return expCount > 0 ? 'border-rose-300 bg-rose-50' : 'border-slate-200'; })()}`}>
+            <div className={`bg-white border rounded-xl px-4 py-3 ${(() => { const todayStr = new Date().toISOString().split('T')[0]; const expCount = offlineInventoryItems.reduce((c, item) => c + (item.batches || []).filter(b => b.expiryDate && b.expiryDate < todayStr && b.qty > 0).length, 0); return expCount > 0 ? 'border-rose-300 bg-rose-50' : 'border-slate-200'; })()}`}>
               <div className="text-[10px] font-black text-slate-500 uppercase">过期批次</div>
-              <div className="text-2xl font-black text-rose-700">{(() => { const todayStr = new Date().toISOString().split('T')[0]; return offlineInventoryItems.reduce((c, item) => c + (item.batches || []).filter(b => b.expiryDate && b.expiryDate <= todayStr && b.qty > 0).length, 0); })()}</div>
+              <div className="text-2xl font-black text-rose-700">{(() => { const todayStr = new Date().toISOString().split('T')[0]; return offlineInventoryItems.reduce((c, item) => c + (item.batches || []).filter(b => b.expiryDate && b.expiryDate < todayStr && b.qty > 0).length, 0); })()}</div>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
               <div className="text-[10px] font-black text-slate-500 uppercase">客户 / 收件信息</div>
@@ -5537,7 +5576,7 @@ const App = () => {
                         const isExpanded = offlineExpandedItemId === item.id;
                         const todayStr = new Date().toISOString().split('T')[0];
                         const batches = item.batches || [];
-                        const expiredCount = batches.filter(b => b.expiryDate && b.expiryDate <= todayStr).length;
+                        const expiredCount = batches.filter(b => b.expiryDate && b.expiryDate < todayStr).length;
                         return (
                           <React.Fragment key={item.id}>
                             <tr
