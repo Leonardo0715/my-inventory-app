@@ -1616,6 +1616,15 @@ const App = () => {
       setWarning('当前未获取到登录账号，无法提交删除审批');
       return false;
     }
+    // 防重复：检查是否已有相同的 pending 审批
+    const isDuplicate = deleteApprovals.some(a =>
+      a.status === 'pending' && a.actionType === actionType &&
+      JSON.stringify(a.payload) === JSON.stringify(payload)
+    );
+    if (isDuplicate) {
+      setWarning('该操作已有待审批请求，请勿重复提交');
+      return false;
+    }
     const now = new Date().toISOString();
     const request = {
       id: Date.now(),
@@ -1692,6 +1701,14 @@ const App = () => {
       const qtyNum = Number(destroyQty);
       if (!Number.isFinite(eidNum) || !Number.isFinite(qtyNum) || qtyNum <= 0) return;
       const now = new Date().toISOString();
+      // 计算实际可销毁数量（审批期间批次可能已被消耗）
+      const targetItemForDestroy = offlineInventoryItems.find(i => i.id === eidNum);
+      const targetBatch = targetItemForDestroy?.batches?.find(b => b.expiryDate === batchExpiryDate);
+      const actualDestroyed = targetBatch ? Math.min(qtyNum, targetBatch.qty) : 0;
+      if (actualDestroyed <= 0) {
+        setWarning('该批次已无可销毁库存（可能在审批期间已被消耗），操作跳过');
+        return;
+      }
       setOfflineInventoryItems(prev => prev.map(item => {
         if (item.id !== eidNum) return item;
         const currentStock = Number(item.currentStock || 0);
@@ -1699,11 +1716,11 @@ const App = () => {
         let batches = [...(item.batches || [])];
         const bIdx = batches.findIndex(b => b.expiryDate === batchExpiryDate);
         if (bIdx >= 0) {
-          const newQty = Math.max(0, batches[bIdx].qty - qtyNum);
+          const newQty = batches[bIdx].qty - actualDestroyed;
           if (newQty > 0) { batches[bIdx] = { ...batches[bIdx], qty: newQty }; }
           else { batches.splice(bIdx, 1); }
         }
-        return { ...item, currentStock: Math.max(0, currentStock - qtyNum), batches, outboundTotal: outboundTotal + qtyNum, updatedAt: now };
+        return { ...item, currentStock: Math.max(0, currentStock - actualDestroyed), batches, outboundTotal: outboundTotal + actualDestroyed, updatedAt: now };
       }));
       setOfflineInventoryLogs(prev => [{
         id: Date.now(),
@@ -1711,7 +1728,7 @@ const App = () => {
         itemName: offlineInventoryItems.find(i => i.id === eidNum)?.name || '',
         type: 'out',
         purpose: 'expired_destroy',
-        qty: qtyNum,
+        qty: actualDestroyed,
         account: destroyAccount || user?.email || '',
         customerId: null, customerName: '', customerPlatform: '', customerIdentity: '', customerPhone: '',
         profileId: null, profileLabel: '', profileReceiver: '', profilePhone: '', profileAddress: '',
@@ -3531,8 +3548,8 @@ const App = () => {
     // 如果当前库存为0或很低，且有待补货的PO，应该基于补货日期来计算覆盖天数
     let targetDayIndex = 400; // 默认安全
     
-    // 检查是否有待补货的PO
-    const activePOs = sku.pos?.filter(po => po.status !== 'cancelled') || [];
+    // 检查是否有待补货的PO（排除已取消和已上架，与推演引擎一致）
+    const activePOs = sku.pos?.filter(po => po.status !== 'cancelled' && po.status !== 'shelved') || [];
     
     if (Number(sku.currentStock || 0) === 0 && activePOs.length > 0) {
       // 当前库存为0，有待补货的PO
@@ -3629,10 +3646,10 @@ const App = () => {
         totalConsumption += dailyRatesCalc[d.getMonth()];
       }
 
-      // 2. 计算预警期内PO到货总量（排除已取消）
+      // 2. 计算预警期内PO到货总量（排除已取消和已上架，与推演引擎一致）
       let totalIncoming = 0;
       (sku.pos || []).forEach(po => {
-        if (po.status === 'cancelled') return;
+        if (po.status === 'cancelled' || po.status === 'shelved') return;
         const arrival = new Date(po.orderDate);
         if (isNaN(arrival.getTime())) return;
         arrival.setDate(arrival.getDate() + getPoTotalLT(po));
@@ -4555,10 +4572,12 @@ const App = () => {
                                      const isProductionWarning = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
                                      const daysOverdue = Math.floor((new Date() - arrivalDateObj) / 86400000);
                                      const isOverdue = daysOverdue > 0 && po.status !== 'shelved';
+                                     const daysUntilArrival = Math.ceil((arrivalDateObj - new Date()) / 86400000);
+                                     const isNearArrival = !isOverdue && !isProductionWarning && daysUntilArrival >= 0 && daysUntilArrival <= 30;
                                      const isExpanded = expandedPoId === po.id;
                                      
                                      return (
-                                     <div key={po.id} className={`rounded-xl relative group border transition-all ${isOverdue ? 'bg-orange-50 border-orange-400 shadow-md shadow-orange-200' : isProductionWarning ? 'bg-red-50 border-red-300 shadow-md shadow-red-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'} p-3`}>
+                                     <div key={po.id} className={`rounded-xl relative group border transition-all ${isOverdue ? 'bg-orange-50 border-orange-400 shadow-md shadow-orange-200' : isProductionWarning ? 'bg-red-50 border-red-300 shadow-md shadow-red-200' : isNearArrival ? 'bg-blue-50 border-blue-300 shadow-md shadow-blue-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-300'} p-3`}>
                                         {isOverdue && (
                                           <div className="mb-2 bg-orange-100 border border-orange-400 rounded-lg px-3 py-1.5 flex items-center gap-2">
                                             <AlertTriangle size={12} className="text-orange-600 flex-shrink-0" />
@@ -4569,6 +4588,12 @@ const App = () => {
                                           <div className="mb-2 bg-red-100 border border-red-300 rounded-lg px-3 py-1.5 flex items-center gap-2">
                                             <AlertTriangle size={12} className="text-red-600 flex-shrink-0" />
                                             <span className="text-[10px] font-black text-red-700">⚠️ 交期预警：{Math.ceil(daysUntilProdEnd)} 天</span>
+                                          </div>
+                                        )}
+                                        {isNearArrival && (
+                                          <div className="mb-2 bg-blue-100 border border-blue-300 rounded-lg px-3 py-1.5 flex items-center gap-2">
+                                            <Clock size={12} className="text-blue-600 flex-shrink-0" />
+                                            <span className="text-[10px] font-black text-blue-700">📦 即将到货：预计 {daysUntilArrival} 天后到达（{arrivalDate}）</span>
                                           </div>
                                         )}
                                         <button 
@@ -6892,19 +6917,24 @@ const App = () => {
                   arrivalDate.setDate(arrivalDate.getDate() + getPoTotalLT(po));
                   const prodEndDate = new Date(new Date(po.orderDate).getTime() + Number(po.prodDays || 0) * 86400000);
                   const daysUntilProdEnd = (prodEndDate - new Date()) / 86400000;
-                  const needsFollowUp = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
+                  const isProductionWarning = po.status === 'in_production' && daysUntilProdEnd > 0 && daysUntilProdEnd <= 45;
                   const arrivalDateStr = arrivalDate.toISOString().split('T')[0];
                   const daysOverdue = Math.floor((new Date() - arrivalDate) / 86400000);
                   const isOverdue = daysOverdue > 0 && po.status !== 'shelved' && po.status !== 'cancelled';
+                  const daysUntilArrival = Math.ceil((arrivalDate - new Date()) / 86400000);
+                  const isNearArrival = !isOverdue && !isProductionWarning && daysUntilArrival >= 0 && daysUntilArrival <= 30;
                   
                   allPos.push({
                     ...po,
                     skuId: sku.id,
                     skuName: sku.name,
                     arrivalDate: arrivalDateStr,
-                    needsFollowUp: needsFollowUp || isOverdue,
+                    needsFollowUp: isProductionWarning || isOverdue || isNearArrival,
                     followUpDays: Math.ceil(daysUntilProdEnd),
+                    daysUntilArrival,
                     isOverdue,
+                    isNearArrival,
+                    isProductionWarning,
                     daysOverdue
                   });
                 });
@@ -7000,10 +7030,15 @@ const App = () => {
                                                 <AlertTriangle size={12} className="flex-shrink-0 animate-pulse"/>
                                                 <span>🚨 到货超期 {po.daysOverdue} 天</span>
                                             </div>
-                                        ) : po.needsFollowUp ? (
+                                        ) : po.isProductionWarning ? (
                                             <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold ${dashboardTheme === 'dark' ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-100 text-red-600'}`}>
                                                 <AlertTriangle size={12} className="flex-shrink-0"/>
-                                                <span>距完工还剩 {po.followUpDays} 天</span>
+                                                <span>⚠️ 距完工还剩 {po.followUpDays} 天</span>
+                                            </div>
+                                        ) : po.isNearArrival ? (
+                                            <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold ${dashboardTheme === 'dark' ? 'bg-blue-900/20 border-blue-800 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
+                                                <Clock size={12} className="flex-shrink-0"/>
+                                                <span>📦 {po.daysUntilArrival} 天后到货</span>
                                             </div>
                                         ) : (
                                             <span className="opacity-20">-</span>
